@@ -1,0 +1,40 @@
+import numpy as np
+import torch
+
+# precision for floating point operations
+PTFLOAT = torch.float32
+PTCOMPLEX = torch.complex64
+
+NPFLOAT = np.float32
+NPCOMPLEX = np.complex64
+
+# General parameters
+c = 1540
+f0 = 3e6
+fs = 12e6
+
+# Lateral dimension transducer parameters
+num_elements_x=64                   # Number of elements
+pitch_x=300e-6                      # Element pitch [m]
+kerf_x=.01/1000                     # Kerf [m]
+element_width=pitch_x-kerf_x        # Element width [m]
+sub_x=2                             # Number of subelements in x and y
+lat_focus=40e-3                     # Axial-lateral focus [m]
+
+# Elevation dimension transducer parameters
+num_elements_y=1
+kerf_y=0
+pitch_y=10/1000;                  
+element_height=pitch_y-kerf_y       # Element height [m]
+sub_y=sub_x*round(element_height/element_width)
+elev_focus=40/1000                  # Axial-elevation focus [m]
+
+nelem = 1
+num_lines = num_elements_x-nelem+1
+
+# Generate transducer positions
+aperture_rx = np.linspace(-(num_elements_x-1)/2*pitch_x, (num_elements_x-1)/2*pitch_x, num_elements_x)
+aperture_tx = np.linspace(-(num_lines-1)/2*pitch_x, (num_lines-1)/2*pitch_x, num_lines)
+
+rx_pos = torch.tensor( np.hstack( (aperture_rx.reshape(-1, 1), np.zeros( [aperture_rx.shape[0], 2] )) ) )
+tx_pos = torch.tensor( np.hstack( (aperture_tx.reshape(-1, 1), np.zeros( [aperture_tx.shape[0], 2] )) ) )
