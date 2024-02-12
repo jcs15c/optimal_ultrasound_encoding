@@ -38,3 +38,35 @@ aperture_tx = np.linspace(-(num_lines-1)/2*pitch_x, (num_lines-1)/2*pitch_x, num
 
 rx_pos = torch.tensor( np.hstack( (aperture_rx.reshape(-1, 1), np.zeros( [aperture_rx.shape[0], 2] )) ) )
 tx_pos = torch.tensor( np.hstack( (aperture_tx.reshape(-1, 1), np.zeros( [aperture_tx.shape[0], 2] )) ) )
+
+# Expected speckle pattern brightness
+hist_data = [-11.811993598937988, 5.649099826812744]
+
+default_opt_params = {
+    'trainable_params': 'both',
+    'training_resolution': 1.0,
+    'training_shuffle': True,
+    'loss_func': None,
+    'DelayProj': None,
+    'WeightProj': None,
+    'target_type': 'unencoded',
+    'num_epochs': 15,
+    'desc_alg': "SGD",
+    'lrate': 0.01,
+    'sched': None,
+    'momentum': 0.0
+}
+
+default_enc_params = {
+    'noise_params': {'BW': 0.7, 'SNR': 12},
+    'tik_param': 0.1
+}
+
+default_bf_params = {
+    'image_dims': [300, 500],
+    'image_range': None,
+    'dB_min': -60,
+    'roi_pads': [1.0, 1.0],
+    'hist_params': {'bins': 100, 'sigma': 3},
+    'hist_match': True
+}

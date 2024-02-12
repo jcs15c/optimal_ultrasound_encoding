@@ -1,7 +1,7 @@
 # Optimal Ultrasound Encoding
 
 This package contains methods to find optimal encoding sequences for use in synthetic transmit aperture ultrasound imaging. 
-The module `encoding_optimization.py` contains the primary function to perform the optimization. Example parameters are provided in the `examples` folder, along with a Jupyter notebook for sample execution. Sample RF data can be found in the latest release.
+The module `encoding_optimization.py` contains the primary function to perform the optimization. Example parameters are provided in the `examples` folder, along with a Jupyter notebook for sample execution. Sample RF data can be found in the `latest release.
 
 # Dependencies
 

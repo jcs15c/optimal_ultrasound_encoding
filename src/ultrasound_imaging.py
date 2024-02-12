@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 import src.settings as s
-import src.ultrasound_encoding as uu
+import src.ultrasound_utilities as uu
 
 class BeamformAD(torch.autograd.Function):
     """ Beamform operator with custom adjoint operation """
@@ -197,7 +197,7 @@ def meshless_torch_beamform( iq, r0, dr, rx_pos, x, z):
         return iq_focused
 
 
-def create_target_mask( locs, image_grid, rpad=1.0 ):
+def create_target_mask( locs, bf_params, roi_pads=1.0 ):
     """
     Create a mask for point targets or anechoic targets in a lesion image
     
@@ -205,7 +205,7 @@ def create_target_mask( locs, image_grid, rpad=1.0 ):
         locs - Locations for imaging targets, stored in [x, y, z, radius] values.
                 If radius is nonpositive, target is a point target
         image_grid - [xpts, zpts] Coordinates of each pixel in image (mm)
-        rpad - Padding for pixels in lesion targets
+        roi_pads - Padding for pixels in lesion targets
         
     Returns:
         Imaging mask
@@ -213,7 +213,10 @@ def create_target_mask( locs, image_grid, rpad=1.0 ):
 
     # get array of angles
     angles = torch.atan2( -locs[:,:,2], locs[:,:,0] )
-    Z, X = torch.meshgrid( image_grid[1], image_grid[0], indexing='ij' )
+    xpts = torch.linspace( bf_params['image_range'][0], bf_params['image_range'][1], bf_params['image_dims'][0] )
+    zpts = torch.linspace( bf_params['image_range'][2], bf_params['image_range'][3], bf_params['image_dims'][1] )
+
+    Z, X = torch.meshgrid( zpts, xpts, indexing='ij' )
     mask = torch.zeros( [locs.shape[0], Z.shape[0], Z.shape[1]], dtype=torch.bool )
         
     # Ellipse parameters
@@ -233,11 +236,11 @@ def create_target_mask( locs, image_grid, rpad=1.0 ):
                 x0 = locs[k,i,0]
                 z0 = locs[k,i,2]
                 r0 = locs[k,i,3]
-                mask[k] = mask[k] + ( (X - x0)**2  + (Z - z0)**2 <= (rpad*r0)**2 )
+                mask[k] = mask[k] + ( (X - x0)**2  + (Z - z0)**2 <= (roi_pads*r0)**2 )
             mask[k] = ~mask[k]
     return ~mask
 
-def partial_histogram_matching( env, locs, image_grid, mu_Y, sigma_Y ):
+def partial_histogram_matching( env, locs, bf_params, mu_Y, sigma_Y ):
     """
     Scale the image so that the mean and variance of it's spackle pattern matches
     that of a refernce (mu_Y, sigma_Y). Assumes that env is an array of 
@@ -255,7 +258,7 @@ def partial_histogram_matching( env, locs, image_grid, mu_Y, sigma_Y ):
     """
     rescaled_env = torch.zeros( env.shape )
    
-    target_mask = ~create_target_mask( locs, image_grid )
+    target_mask = ~create_target_mask( locs, bf_params )
     
     # Only want to consider middle fifth of image to avoid FOV issues
     trunc_mask = torch.zeros( env.shape, dtype=torch.bool )
@@ -278,7 +281,7 @@ def partial_histogram_matching( env, locs, image_grid, mu_Y, sigma_Y ):
     return rescaled_env
 
 
-def mean_gCNR( env, locs, image_grid, hist_param=[100, 3], smooth=True, truncated=False, rpad=[1.0, 1.0] ):
+def mean_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smooth=True, truncated=False, roi_pads=[1.0, 1.0] ):
     """
     Compute the gCNR for an array of images need to get the mask, figure out which 
     pixels are in/outside of the lesions, then compute histogram overlap.
@@ -292,16 +295,15 @@ def mean_gCNR( env, locs, image_grid, hist_param=[100, 3], smooth=True, truncate
         hist_param - [bins, smoothing parameter] for smooth histogram calculations
         smooth - If true, use smooth histogram for calculations
         truncated - If true, only compute gCNR of middle 5th of image
-        rpad - [inner radius, outer radius] Padding for pixels in gCNR calculation
+        roi_pads - [inner radius, outer radius] Padding for pixels in gCNR calculation
         
     Returns:
         the generalized Contrast to Noise Ratio
     """
-    bins, sigma = hist_param[0], hist_param[1]
     gCNRs = torch.zeros( env.shape[0] )
     
-    outside = ~create_target_mask( locs, image_grid, rpad[1] )
-    inside  =  create_target_mask( locs, image_grid, rpad[0] )
+    outside = ~create_target_mask( locs, bf_params, roi_pads[1] )
+    inside  =  create_target_mask( locs, bf_params, roi_pads[0] )
 
     if truncated == True:
         trunc_mask = torch.zeros( env.shape, dtype=torch.bool ) # Set middle fifth of each mask to 1
@@ -318,8 +320,8 @@ def mean_gCNR( env, locs, image_grid, hist_param=[100, 3], smooth=True, truncate
             m = env[i].min()
             M = env[i].max()
             
-            hist_A = uu.SoftHistogram( bins=bins, min=m, max=M, sigma=sigma )( A ) / A.numel()         
-            hist_B = uu.SoftHistogram( bins=bins, min=m, max=M, sigma=sigma )( B ) / B.numel()
+            hist_A = uu.SoftHistogram( bins=hist_params['bins'], min=m, max=M, sigma=hist_params['sigma'] )( A ) / A.numel()         
+            hist_B = uu.SoftHistogram( bins=hist_params['bins'], min=m, max=M, sigma=hist_params['sigma'] )( B ) / B.numel()
             
             gCNRs[i] = 1 - torch.min( hist_A, hist_B ).sum()
     else:
@@ -330,8 +332,8 @@ def mean_gCNR( env, locs, image_grid, hist_param=[100, 3], smooth=True, truncate
             m = env[i].min()
             M = env[i].max()
             
-            hist_A = torch.histc( A, bins=bins, min=m.item(), max=M.item() ) / A.numel()           
-            hist_B = torch.histc( B, bins=bins, min=m.item(), max=M.item() ) / B.numel()
+            hist_A = torch.histc( A, bins=hist_params['bins'], min=m.item(), max=M.item() ) / A.numel()           
+            hist_B = torch.histc( B, bins=hist_params['bins'], min=m.item(), max=M.item() ) / B.numel()
             
             gCNRs[i] = 1 - torch.min( hist_A, hist_B ).sum()   
             

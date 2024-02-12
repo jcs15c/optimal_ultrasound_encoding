@@ -142,5 +142,30 @@ def plot_delays_weights( delays, weights, filename, title ):
     plt.savefig( filename )
 
 
-
+def plot_losses( testing_losses, training_losses, filename, title ):
+    """
+    Plot a set of weights overlaid on the delays 
+    
+    Parameters:
+        delays - The delays to plot
+        weights - The delays to plot
+        filename - Filename to save the image to
+        title - Title of the plot
+        
+    Returns:
+        Saves the image to `filename`
+    """
+    plt.clf()
+    
+    plt.plot( testing_losses.T, 'r', alpha=0.1 )
+    plt.plot( np.mean( testing_losses, axis=0 ), color='red', linewidth=2, label="Average Loss on Testing Data" )
+    
+    plt.plot( training_losses.T, 'b', alpha=0.1 )
+    plt.plot( np.mean( training_losses, axis=0 ), color='blue', linewidth=2, label="Average Loss on Training Data" )
+    plt.xlabel( "Epoch" )
+    plt.ylabel( f"{title}" )
+    plt.legend()
+    plt.title( title )
+    plt.tight_layout()
+    plt.savefig( filename )
 

@@ -132,7 +132,7 @@ def hilbert( x ):
       
     return torch.fft.ifft( torch.fft.fft( x, dim=0 ) * 2 * u, dim=0 )
 
-def generate_encoded_noise( rf_ref, acq_params, BW, SNR, sz ):
+def generate_encoded_noise( rf_ref, acq_params, noise_params, sz ):
     """
     Generate an array of bandlimited noise. Add to encoded data.
     
@@ -149,8 +149,8 @@ def generate_encoded_noise( rf_ref, acq_params, BW, SNR, sz ):
     noise = np.random.normal( 0, 1, size=sz )
     
     # Define critical frequencies as a fraction of Nyquist frequency
-    max_f = acq_params['f0'].item()*(1 + BW) / (acq_params['fs'].item() / 2)   
-    min_f = acq_params['f0'].item()*(1 - BW) / (acq_params['fs'].item() / 2)
+    max_f = acq_params['f0'].item()*(1 + noise_params['BW']) / (acq_params['fs'].item() / 2)   
+    min_f = acq_params['f0'].item()*(1 - noise_params['BW']) / (acq_params['fs'].item() / 2)
 
     # Create filter (with order 5) and apply it to each sequence of data
     numerator, denominator = scipy.signal.butter( 5, [min_f, max_f], btype='bandpass' )
@@ -159,7 +159,7 @@ def generate_encoded_noise( rf_ref, acq_params, BW, SNR, sz ):
     noise /= torch.std( noise, dim=(1,2,3) ).view(-1, 1, 1, 1)
     
     # Apply a signal to noise ratio of 12 decibals
-    noise *= torch.std( rf_ref, dim=(1,2) ).view(-1, 1, 1, 1) * 10**(-SNR/20)
+    noise *= torch.std( rf_ref, dim=(1,2) ).view(-1, 1, 1, 1) * 10**(-noise_params['SNR']/20)
     
     return noise.float()
 
@@ -215,7 +215,7 @@ def calc_delays_beamforming( rx_pos, x, z ):
     Returns:
         Encoding delays
     """
-    zg, xg = torch.meshgrid( z, x )
+    zg, xg = torch.meshgrid( z, x, indexing='ij' )
     xg = xg.flatten()
     zg = zg.flatten()
     

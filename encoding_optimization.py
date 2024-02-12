@@ -7,203 +7,228 @@ import scipy.io
 import src.ultrasound_utilities as uu
 import src.ultrasound_encoding as ue
 import src.ultrasound_imaging as ui
+import src.ultrasound_optimization as uo
 
 from src.predictor_model import PredictorModel
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import SubsetRandomSampler
 
 import src.settings as s
 
-def optimal_encoding_sequence(test_folder, training_set, testing_set, # Folder names containing data and results
-                           init_delays, init_weights,  # optimization initial parameters
-                           opt_params = "both", loss_func="L2", WeightProj=None, training_resolution="half",  target_type="unencoded", # optimization parameters
-                           num_epochs=15, desc_alg="SGD", lrate=0.1, sched=None, momentum=0, training_shuffle = True, # descent algorithm hyperparameters
-                           image_dims=[300, 500], image_range=[-25, 25, 15, 55], dB_min=-60,   # image parameters
-                           noise_param=[0.7, 12], tik_param=0.1, # Encoding parameters
-                           hist_param=[100,3], gCNR_pad=[1.0, 1.0], notes=None,
-                           save_training_images = False, save_training_loss = False): # less important/fixed parameters
+def optimize_encoding_sequence( results_folder, data_folder, # Folder names containing data and results
+                                init_delays, init_weights, # Initial Sequence
+                                opt_params = None,
+                                enc_params = None,
+                                bf_params = None,
+                                save_training_images = False, save_training_loss = False,
+                                notes = None ):
     """
-    Takes a number of encoding, imaging, and optimization parameters to find
+    Takes a number of optimization, encoding, and imaging parameters to find
     the encoding sequence that minimize given the objective function
 
     Meta-Parameters:
-        test_folder - Location to save optimization results
-        training/testing_set - Folders containing RF data for training/testing
-        save_training_images/loss - If true, store value for training
-        notes - String to save notes in record file
-    Optimization Parameters:
+        results_folder - Path to folder in which optimization results are saved
+        data_folder - Path to folder containing RF data for training/testing
         init_delays/weights - Initial encoding sequence for optimization
-        opt_params - One of ['delays', 'weights', 'both']
-        loss_func - One of ['L2', 'gCNR']
-        WeightProj - Clipper object from `weight_constraints.py` restricting weight values
-        training_resolution - One of ['full', 'half', 'graduated']
+        save_training_images/loss - If true, store values for training
+        notes - String saved alongside results in record file
+    Optimization Parameters: dict containing the following fields and defaults
+        trainable_params - One of ['delays', 'weights', 'both']
+        training_resolution - Fraction of image dimensions used during training, or 'graduated'
+        training_shuffle - Shuffle data during training phase
+        LossFunc - Instance of class from ultrasound_optimization module
+        DelayProj - Clipping object from `sequence_constraints.py` restricting weight values
+        WeightProj - Clipping object from `sequence_constraints.py` restricting delay values
         target_type - One of ['unencoded', 'synthetic']
         num_epochs - Number of training epochs
         desc_alg - One of ['SGD', 'Adam', 'LBFGS']
         sched, lrate, momentum - Parameters for descent algorithm
-        training_shuffle - Shuffle data during training phase
     Imaging Parameters
         image_dims - Pixel resolution in [lateral, axial] direction
         image_range - Imaging area [x_min, x_max, z_min, z_max], in mm
         dB_min - Minimum of the dynamic range
-        gCNR_pad - [inner radius, outer radius] Padding for pixels in gCNR calculation
-        hist_param - [bins, smoothing parameter] for smooth histogram calculations
+        roi_pads - [inner radius, outer radius] Padding for pixels in gCNR calculations
+        hist_params - Dict with 'bins' and 'sigma' (smoothing parameter) keys
+        hist_match - Boolean, performs histogram matching during imaging
     Encoding Parameters
-        noise_param - [Bandwidth, SNR] parameters for adding encoding noise
+        noise_param - Dict with ['BW', 'SNR'] keys for adding encoding noise
         tik_param - Tikhonov regularization parameter for decoding
         
-    Returns:
-        Saves optimization results in `test_folder`, including
-            - L2 Loss after each epoch
-            - gCNR after each epoch
-            - Beamformed images after each epoch
-            - Imaging targets
-            - Initial/Trained encoding sequence
-            - Condition number for first 150 encoding matrices
-            - Text file containing test parameters
+    Saves optimization results in `results_folder`, including
+        - L2 Loss after each epoch
+        - gCNR after each epoch
+        - Beamformed images after each epoch
+        - Imaging targets
+        - Initial/Trained encoding sequence
+        - Condition number for first 150 encoding matrices
+        - Text file containing test parameters
     """
-    print( f"Saving results to {test_folder}..." )
-    
-    # Create datasets for training and testing
-    training_dataset = uu.UltrasoundDataset( training_set )
-    training_dataloader = DataLoader(training_dataset, batch_size=len( training_dataset ) // 8, shuffle=training_shuffle)
-    training_acq_params = scipy.io.loadmat(f"{training_set}/acq_params.mat") 
+    # Read data parameters from file
+    dataset = uu.UltrasoundDataset( data_folder )
+    acq_params = scipy.io.loadmat(f"{data_folder}/acq_params.mat") 
 
-    testing_dataset = uu.UltrasoundDataset( testing_set )   
-    testing_acq_params = scipy.io.loadmat(f"{testing_set}/acq_params.mat") 
-        
+    # Fill out the default parameters for each section
+    opt_params = {**s.default_opt_params, **(opt_params or {})}
+    enc_params = {**s.default_enc_params, **(enc_params or {})}
+    bf_params = {**s.default_bf_params, **(bf_params or {})}
+
+    # Fix a few parameters directly
+    if bf_params['image_range'] == None:
+        bf_params['image_range'] = acq_params['image_range'][0]
+    
+    if opt_params['loss_func'] == None:
+        opt_params['loss_func'] = uo.L2_loss
+
+    # Extract some parameters for convinience
+    [full_xpx, full_zpx] = bf_params['image_dims']
+    image_range = bf_params['image_range']
+    num_epochs = opt_params['num_epochs']
+    loss_func = opt_params['loss_func']
+
     # Check that the acquisition parameters for the data is consistent
-    assert training_acq_params['fs'].item() == testing_acq_params['fs'].item() == s.fs
-    assert training_acq_params['f0'].item() == testing_acq_params['f0'].item() == s.f0
-    assert training_acq_params['c'].item() == testing_acq_params['c'].item() == s.c
-    assert (training_acq_params['rx_pos'] == testing_acq_params['rx_pos']).all() \
-        and np.allclose( training_acq_params['rx_pos'], s.rx_pos.numpy() )
-    assert (training_acq_params['tx_pos'] == testing_acq_params['tx_pos']).all() \
-        and np.allclose( training_acq_params['tx_pos'], s.tx_pos.numpy() )
-    
-    # We train at a lower resolution than we test for efficiency,
-    #   so get list of resolution scales
-    if training_resolution == "full":
-        res = [1 for i in range(num_epochs or 1)]
-    if training_resolution == "half":
-        res = [0.5 for i in range(num_epochs or 1)]
-    if training_resolution == "graduated":
+    assert acq_params['fs'].item() == s.fs
+    assert acq_params['f0'].item() == s.f0
+    assert acq_params['c'].item() == s.c
+    assert np.allclose( acq_params['rx_pos'], s.rx_pos.numpy() )
+    assert np.allclose( acq_params['tx_pos'], s.tx_pos.numpy() )
+
+    if not isinstance( opt_params['training_resolution'], str ):
+        res = [opt_params['training_resolution'] for i in range(num_epochs or 1)]
+    elif opt_params['training_resolution'] == "graduated":
         res = list( np.linspace( 0.25, 1.0, num_epochs)) or [1.0]
-    
-    # Define full image parameters for testing (number of pixels)
-    xpx = image_dims[0]
-    zpx = image_dims[1]
 
-    # Define testing resolution (1D grid)
-    x_te = torch.linspace(image_range[0], image_range[1], steps=xpx)/1000
-    z_te = torch.linspace(image_range[2], image_range[3], steps=zpx)/1000
-    
-    # Define training resolution (1D grid)
-    x_tr = torch.linspace(image_range[0], image_range[1], steps=int(xpx*res[0]) )/1000
-    z_tr = torch.linspace(image_range[2], image_range[3], steps=int(zpx*res[0]) )/1000    
+    # Get indices for each dataset
+    indices = list(range(len(dataset)))
+    split = int(np.floor(0.2 * len(dataset)))
+    if opt_params['training_shuffle']:
+        np.random.shuffle(indices)
+    train_idx, test_idx = indices[2:4], indices[:2]
 
-    # Define "default" histogram data from standard spackel pattern
-    hist_data = [-11.811993598937988, 5.649099826812744]
+    # Write description of test to file so you don't forget what you did
+    print( f"Saving results to {results_folder}..." )
+    with open(results_folder + '/test_description.txt', 'w') as f:
+        f.write(f"Data folder used: {data_folder}\n")
+        f.write(f"Training subset used: {train_idx}\n")
+        f.write(f"Testing subset used: {test_idx}\n\n")
+        f.write(f"Optimization parameters:\n")
+        for key, value in opt_params.items():
+            f.write(f"\t{key}: {value}\n")
+
+        f.write(f"Encoding parameters:\n")
+        for key, value in enc_params.items():
+            f.write(f"\t{key}: {value}\n")
+
+        f.write(f"Imaging parameters:\n")
+        for key, value in bf_params.items():
+            f.write(f"\t{key}: {value}\n")
+
+        f.write("Other notes:\n")
+        f.write(f"{notes}")
+
+    training_dataloader = DataLoader(dataset, batch_size=8, sampler=train_idx, shuffle=False)
 
     # Define training model and optimzer
-    training_model = PredictorModel(init_delays.clone(), init_weights.clone(), training_acq_params, [x_tr, z_tr], 
-                                    tik_param=tik_param, dB_min=dB_min, hist_data=hist_data, noise_param=noise_param )
+    uncompiled_model = PredictorModel(init_delays.clone(), init_weights.clone(), acq_params, enc_params, bf_params )
 
     # Switch on the right parameters
-    if opt_params == "delays":
-        training_model.delays.requires_grad = True
-        training_model.weights.requires_grad = False
-    elif opt_params == "weights":
-        training_model.delays.requires_grad = False
-    elif opt_params == "both":
-        training_model.delays.requires_grad = True
-        training_model.weights.requires_grad = True
+    if opt_params['trainable_params'] == "delays":
+        uncompiled_model.delays.requires_grad = True
+        uncompiled_model.weights.requires_grad = False
+    elif opt_params['trainable_params'] == "weights":
+        uncompiled_model.delays.requires_grad = False
+    elif opt_params['trainable_params'] == "both":
+        uncompiled_model.delays.requires_grad = True
+        uncompiled_model.weights.requires_grad = True
     else:
         print("Invalid choice for optimization parameters")
         return
 
+    # training_model = torch.compile( uncompiled_model )
+    prediction_model = uncompiled_model
+    
     # Select descent algorithm
-    if desc_alg.lower() == "sgd":
-        opt = torch.optim.SGD( training_model.parameters(), lr=lrate, momentum=momentum )
-    elif desc_alg.lower() == "adam":
-        opt = torch.optim.Adam( training_model.parameters(), lr=lrate )
-    elif desc_alg.lower() == "bfgs" or desc_alg.lower() == "lbfgs":
-        opt = torch.optim.LBFGS( training_model.parameters(), lr=lrate, max_iter=4 )
+    if opt_params['desc_alg'].lower() == "sgd":
+        opt = torch.optim.SGD( uncompiled_model.parameters(), lr=opt_params['lrate'], momentum=opt_params['momentum'] )
+    elif opt_params['desc_alg'].lower() == "adam":
+        opt = torch.optim.Adam( uncompiled_model.parameters(), lr=opt_params['lrate'] )
+    elif opt_params['desc_alg'].lower() == "bfgs" or opt_params['desc_alg'].lower() == "lbfgs":
+        opt = torch.optim.LBFGS( uncompiled_model.parameters(), lr=opt_params['lrate'], max_iter=4 )
     else:
         print("Invalid choice for descent algorithm")
         return
     
     # Set exponential scheduler
-    if sched != None:
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=sched)
-   
-    # Plot early to make sure it's saving correctly
-    np.savetxt( test_folder + "/initial_delays.csv", init_delays, delimiter=',' )    
-    uu.plot_delays(init_delays, test_folder + "/initial_delays.png", "Initial Delays")
+    if not isinstance( opt_params['sched'], str ):
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=opt_params['sched'])
+    elif opt_params['sched'] == "OneCycleLR":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=opt_params['lrate'], steps_per_epoch=len(training_dataloader), epochs=num_epochs )
     
-    np.savetxt( test_folder + "/initial_weights.csv", init_weights, delimiter=',' )    
-    uu.plot_delays_weights(init_delays, init_weights, test_folder + "/initial_weights.png", "Initial Weights")
-    uu.plot_weights( init_weights, test_folder + "/initial_weigths_array.png", "Initial Amplitude Weights" )
-        
-    # Define encoding models at high resolution for testing
-    testing_model = PredictorModel(init_delays.clone(), init_weights.clone(), testing_acq_params, [x_te, z_te], 
-                                   tik_param=tik_param, dB_min=dB_min, hist_data=hist_data, noise_param=noise_param )
+    # Plot early to make sure it's saving correctly
+    np.savetxt( results_folder + "/initial_delays.csv", init_delays, delimiter=',' )    
+    uu.plot_delays(init_delays, results_folder + "/initial_delays.png", "Initial Delays")
+    
+    np.savetxt( results_folder + "/initial_weights.csv", init_weights, delimiter=',' )    
+    uu.plot_delays_weights(init_delays, init_weights, results_folder + "/initial_weights.png", "Initial Weights")
+    uu.plot_weights( init_weights, results_folder + "/initial_weigths_array.png", "Initial Amplitude Weights" )
         
     # Store array of per-iteration testing loss for each
-    testing_losses_L2 = np.zeros([len(testing_dataset), num_epochs+1])
-    testing_losses_gCNR = np.zeros([len(testing_dataset), num_epochs+1])
+    testing_losses_loss_func = np.zeros([len(test_idx), num_epochs+1])
+    testing_losses_L2 = np.zeros([len(test_idx), num_epochs+1])
+    testing_losses_gCNR = np.zeros([len(test_idx), num_epochs+1])
     
     # Store array of per-iteration training loss for each
-    training_losses_L2 = np.zeros([len(training_dataset), num_epochs+1])
-    training_losses_gCNR = np.zeros([len(training_dataset), num_epochs+1])
+    training_losses_loss_func = np.zeros([len(train_idx), num_epochs+1])
+    training_losses_L2 = np.zeros([len(train_idx), num_epochs+1])
+    training_losses_gCNR = np.zeros([len(train_idx), num_epochs+1])
     
     # Store array of condition numbers at each iteration
     num_freq = 150
     condition_numbers = np.zeros([num_freq, num_epochs+1])
     condition_numbers[:,0] = torch.linalg.cond( ue.calc_H( 2*(num_freq-1), init_delays, init_weights ) )[0]
-    
-    # Acquire testing data's beamformed images for comparison at each epoch
-    image_targets = torch.empty( (len( testing_dataset ), zpx, xpx), dtype=s.PTFLOAT )
-    print("Getting testing data", end="")
-    for (k, [data, loc]) in enumerate( testing_dataset ):
-        
-        print(".", end="")
-        with torch.no_grad():
-            data = torch.tensor( data ).unsqueeze(0)
-            loc = torch.tensor( loc ).unsqueeze(0)
-            
-            image_targets[k,:,:] = testing_model.get_targets( data, loc, target_type )
-            
-            init_image = testing_model.get_image_prediction( data, loc )[0]
-                
-            testing_losses_L2[k, 0] = torch.mean( torch.linalg.norm( init_image - image_targets[k]) )
-            testing_losses_gCNR[k, 0] = ui.mean_gCNR( init_image.unsqueeze(0), loc, [x_te, z_te], hist_param=hist_param, rpad=gCNR_pad )
 
-            uu.plot_beamformed_image( init_image, image_dims, image_range, test_folder + f"/testing_image{k}_init.png", "Initial Encoding" )
-            uu.plot_beamformed_image( image_targets[k], image_dims, image_range, test_folder + f"/testing_image{k}_target.png", "No Encoding" )
+    N_test_images = 1 # Number of test images to record
+
+    # Acquire testing data's beamformed images for comparison at each epoch
+    image_targets = torch.empty( (len( test_idx ), full_zpx, full_xpx), dtype=s.PTFLOAT )
+    print("Getting testing data", end="")
+    prediction_model.set_resolution( int(full_xpx), int(full_zpx) )
+    for (k, idx) in enumerate( test_idx ):
+        datas, locs = [torch.tensor(x).unsqueeze(0) for x in dataset[idx] ]
+        with torch.no_grad():
+            init_images = prediction_model.get_image_prediction( datas, locs )
+            image_targets[k,:,:] = prediction_model.get_targets( datas, locs, opt_params['target_type'] )
+                
+            testing_losses_loss_func[k, 0] = loss_func( init_images, image_targets[k], locs, bf_params )
+            testing_losses_L2[k, 0] = uo.L2_loss( init_images, image_targets[k], locs, bf_params )
+            testing_losses_gCNR[k, 0] = uo.gCNR_loss( init_images, image_targets[k], locs, bf_params )
+
+            print( f"Testing Loss {k}: {testing_losses_loss_func[k,0]}" )
+
+            if k < N_test_images:
+                uu.plot_beamformed_image( init_images[0], [full_xpx, full_zpx], image_range, results_folder + f"/testing_image{k}_target.png", "No Encoding" )
+                uu.plot_beamformed_image( image_targets[k], [full_xpx, full_zpx], image_range, results_folder + f"/testing_image{k}_target.png", "Imaging Target" )
             
+
     if save_training_images == True or save_training_loss == True:
         # Acquire training data's beamformed images for comparison at each epoch
-        training_image_targets = torch.empty( (len( training_dataset ), zpx, xpx), dtype=s.PTFLOAT )
+        training_image_targets = torch.empty( (len( train_idx ), full_zpx, full_xpx), dtype=s.PTFLOAT )
         
         print("\nGetting training data", end="")
-        for (k, [data, loc]) in enumerate( training_dataset ):
+        for (k, idx) in enumerate( train_idx ):
             
-            print(".", end="")
+            datas, locs = [torch.tensor(x).unsqueeze(0) for x in dataset[idx] ]
             with torch.no_grad():
-                data = torch.tensor( data ).unsqueeze(0)
-                loc = torch.tensor( loc ).unsqueeze(0)
-                
-                training_image_targets[k,:,:] = testing_model.get_targets( data, loc, target_type )
-                
-                init_image = testing_model.get_image_prediction( data, loc )[0]
+                init_images = prediction_model.get_image_prediction( datas, locs )
+                training_image_targets[k,:,:] = prediction_model.get_targets( datas, loss_closure, opt_params['target_type'] )
                   
                 if save_training_loss == True:
-                    training_losses_L2[k, 0] = torch.mean( torch.linalg.norm( init_image - training_image_targets[k]) )
-                    training_losses_gCNR[k, 0] = ui.mean_gCNR( init_image.unsqueeze(0), loc, [x_te, z_te], hist_param=hist_param, rpad=gCNR_pad )   
-                    
+                    training_losses_loss_func[k, 0] = loss_func( init_images, image_targets[k], locs, bf_params )
+                    training_losses_L2[k, 0] = uo.L2_loss( init_images, training_image_targets[k], locs, bf_params )
+                    training_losses_gCNR[k, 0] = uo.gCNR_loss( init_images, training_image_targets[k], locs, bf_params )
+
                 if save_training_images == True:
-                    uu.plot_beamformed_image( init_image, image_dims, image_range, test_folder + f"/training_image{k}_init.png", "Initial Encoding" )
-                    uu.plot_beamformed_image( training_image_targets[k], image_dims, image_range, test_folder + f"/training_image{k}_target.png", "No Encoding" )
+                    uu.plot_beamformed_image( init_images[0], [full_xpx, full_zpx], image_range, results_folder + f"/training_image{k}_init.png", "Initial Encoding" )
+                    uu.plot_beamformed_image( training_image_targets[k], [full_xpx, full_zpx], image_range, results_folder + f"/training_image{k}_target.png", "No Encoding" )
             
     # Train model
     print("\n-------------Training Phase-------------")
@@ -213,9 +238,7 @@ def optimal_encoding_sequence(test_folder, training_set, testing_set, # Folder n
         step_losses = []
         
         # Change the training resolution
-        x = torch.linspace(image_range[0], image_range[1], steps=int( xpx * res[n] ))/1000
-        z = torch.linspace(image_range[2], image_range[3], steps=int( zpx * res[n] ))/1000
-        training_model.change_resolution( [x, z] )
+        prediction_model.set_resolution( int(full_xpx * res[n]), int(full_zpx * res[n]) )
         
         for (k, [datas, locs]) in enumerate( training_dataloader ):    
             the_loss = torch.zeros(1, dtype=s.PTFLOAT)
@@ -224,17 +247,14 @@ def optimal_encoding_sequence(test_folder, training_set, testing_set, # Folder n
                 opt.zero_grad()
 
                 # Acquire targets
-                targets = training_model.get_targets( data, loc, target_type )
+                targets = prediction_model.get_targets( datas, locs, opt_params['target_type'] )
                     
                 # Get prediction
-                predictions = training_model.get_image_prediction( datas, locs )
+                predictions = prediction_model.get_image_prediction( datas, locs )
                 
                 # Evaluate loss
-                if loss_func.lower() == "gcnr": # we want to maximize gCNR
-                    the_loss = -ui.mean_gCNR( predictions, locs, [x, z], hist_param=hist_param, rpad=gCNR_pad )
-                else:
-                    the_loss = torch.mean( torch.linalg.norm( predictions - targets, axis=(1,2) ) )
-                
+                the_loss = loss_func( predictions, targets, locs, bf_params )
+
                 # Perform backprogation on the loss
                 the_loss.backward()
                 return the_loss
@@ -242,102 +262,80 @@ def optimal_encoding_sequence(test_folder, training_set, testing_set, # Folder n
             # Perform optimization step on the model
             opt.step(loss_closure)
             
-            if WeightProj != None:
-                training_model.apply(WeightProj)
-            
+            if opt_params['WeightProj'] != None:
+                prediction_model.apply(opt_params['WeightProj'])
+            if opt_params['DelayProj'] != None:
+                prediction_model.apply(opt_params['DelayProj'])
+
             # Show the output
             step_losses.append(the_loss.item())
             
             print( f"step {k} loss: {step_losses[-1]}")
 
         # Step the scheduler, adjust learning rate
-        if sched != None:
+        if opt_params['sched'] != None:
             scheduler.step()
         
-        # Adjust high-res models with learned delays or weights
-        testing_model.delays = torch.nn.Parameter( training_model.delays.clone() )
-        testing_model.weights = torch.nn.Parameter( training_model.weights.clone() )
+        np.savetxt( results_folder + f"/training_delays_{n}.csv", prediction_model.delays.detach().numpy(), delimiter=',' )
+        np.savetxt( results_folder + f"/training_weights_{n}.csv", prediction_model.weights.detach().numpy(), delimiter=',' )
         
-        condition_numbers[:,n+1] = torch.linalg.cond( ue.calc_H( 2*(num_freq-1), training_model.delays.clone().detach(), training_model.weights.clone().detach() ) )[0]
+        # Save a plot of the gCNR training and testing losses
+        uu.plot_losses( testing_losses_loss_func[:, :n],    training_losses_loss_func[:, :n], results_folder + f"/training_losses_LossFunc_{n}.png", f"{loss_func.__name__} Loss" )
+        uu.plot_losses(        testing_losses_L2[:, :n],           training_losses_L2[:, :n], results_folder +       f"/training_losses_L2_{n}.png",                    "L2 Loss" )
+        uu.plot_losses(     -testing_losses_gCNR[:, :n],        -training_losses_gCNR[:, :n], results_folder +     f"/training_losses_gCNR_{n}.png",                  "gCNR Loss" )
+        
+        uu.plot_delays_weights(prediction_model.delays.detach().numpy(), prediction_model.weights.detach().numpy(), results_folder + f"/training_weights_{n}.png", "Learned Weights")
+
+        condition_numbers[:,n+1] = torch.linalg.cond( ue.calc_H( 2*(num_freq-1), prediction_model.delays.clone().detach(), prediction_model.weights.clone().detach() ) )[0]
     
         # Get L2 loss, gCNR on the testing set after each epoch
-        for (k, [data, loc]) in enumerate( testing_dataset ):
+        prediction_model.set_resolution( int(full_xpx), int(full_zpx) )
+        for (k, idx) in enumerate( test_idx ):
+            datas, locs = [torch.tensor(x).unsqueeze(0) for x in dataset[idx] ]
             with torch.no_grad():
-                data = torch.tensor( data ).unsqueeze(0)
-                loc = torch.tensor( loc ).unsqueeze(0)
-                
                 # Compute loss on testing data
-                testing_prediction = testing_model.get_image_prediction( data, loc )[0]
+                testing_prediction = prediction_model.get_image_prediction( datas, locs )[0]
+
+                testing_losses_loss_func[k, n+1] = loss_func( init_images, image_targets[k], locs, bf_params )
+                testing_losses_L2[k, n+1] = uo.L2_loss( init_images, image_targets[k], locs, bf_params )
+                testing_losses_gCNR[k, n+1] = uo.gCNR_loss( init_images, image_targets[k], locs, bf_params )
             
-                testing_losses_L2[k, n+1] = torch.mean( torch.linalg.norm( testing_prediction - image_targets[k]) )
-                testing_losses_gCNR[k, n+1] = ui.mean_gCNR( testing_prediction.unsqueeze(0), loc, [x_te, z_te], hist_param=hist_param, rpad=gCNR_pad )   
-            
-                uu.plot_beamformed_image( testing_prediction, image_dims, image_range, test_folder + f"/testing_image{k}_epoch{n}.png", "Learning Encoding" )
+                uu.plot_beamformed_image( testing_prediction, [full_xpx, full_zpx], image_range, results_folder + f"/testing_image{k}_epoch{n}.png", "Learning Encoding" )
                 
         if save_training_images == True or save_training_loss == True:
             # Get L2 loss, gCNR on the training set after each epoch
-            for (k, [data, loc]) in enumerate( training_dataset ):
+            prediction_model.set_resolution( int(full_xpx * res[n]), int(full_zpx * res[n]) )
+            for (k, idx) in enumerate( train_idx ):
+                datas, locs = [torch.tensor(x).unsqueeze(0) for x in dataset[idx] ]
                 with torch.no_grad():
-                    data = torch.tensor( data ).unsqueeze(0)
-                    loc = torch.tensor( loc ).unsqueeze(0)
-                    
                     # Compute loss on training data, but at full resolution
-                    training_prediction = testing_model.get_image_prediction( data, loc )[0]
-                
-                    if save_training_loss == True:
-                        training_losses_L2[k, n+1] = torch.mean( torch.linalg.norm( training_prediction - training_image_targets[k]) )
-                        training_losses_gCNR[k, n+1] = ui.mean_gCNR( training_prediction.unsqueeze(0), loc, [x_te, z_te], hist_param=hist_param, rpad=gCNR_pad )   
+                    training_predictions = prediction_model.get_image_prediction( datas, locs )
                     
+                    if save_training_loss == True:
+                        training_losses_loss_func[k, n+1] = loss_func( training_predictions, image_targets[k], locs, bf_params )
+                        training_losses_L2[k, n+1] = uo.L2_loss( training_predictions, training_image_targets[k], locs, bf_params )
+                        training_losses_gCNR[k, n+1] = uo.gCNR_loss( training_predictions, training_image_targets[k], locs, bf_params )
+
                     if save_training_images == True:
-                        uu.plot_beamformed_image( training_prediction, image_dims, image_range, test_folder + f"/testing_image{k}_epoch{n}.png", "Learning Encoding" )
-                
+                        uu.plot_beamformed_image( training_predictions[0], [full_xpx, full_zpx], image_range, results_folder + f"/training_image{k}_init.png", "Initial Encoding" )
+ 
         print( f"epoch: {n}, average loss: {np.mean( step_losses )}" )
         epoch_losses.append( np.mean( step_losses ) )
 
     # Save as much data as we have available
-    uu.plot_delays(training_model.delays.detach().numpy(), test_folder + "/trained_delays.png", "Learned Delays")
-    uu.plot_delays_weights(training_model.delays.detach().numpy(), training_model.weights.detach().numpy(), test_folder + "/trained_weights.png", "Learned Weights")
-    uu.plot_weights( training_model.weights.detach().numpy(), test_folder + "/trained_weigths_array.png", "Learned Amplitude Weights" )
+    uu.plot_delays(prediction_model.delays.detach().numpy(), results_folder + "/trained_delays.png", "Learned Delays")
+    uu.plot_delays_weights(prediction_model.delays.detach().numpy(), prediction_model.weights.detach().numpy(), results_folder + "/trained_weights.png", "Learned Weights")
+    uu.plot_weights( prediction_model.weights.detach().numpy(), results_folder + "/trained_weigths_array.png", "Learned Amplitude Weights" )
     
-    np.savetxt( test_folder + "/trained_delays.csv", training_model.delays.detach().numpy(), delimiter=',' )
-    np.savetxt( test_folder + "/trained_weights.csv", training_model.weights.detach().numpy(), delimiter=',' )
+    np.savetxt( results_folder + "/trained_delays.csv", prediction_model.delays.detach().numpy(), delimiter=',' )
+    np.savetxt( results_folder + "/trained_weights.csv", prediction_model.weights.detach().numpy(), delimiter=',' )
     
-    np.savetxt( test_folder + "/training_losses_epoch.csv", np.array( epoch_losses ), delimiter=',' )
+    np.savetxt( results_folder + "/training_losses_epoch.csv", np.array( epoch_losses ), delimiter=',' )
 
-    np.savetxt( test_folder + "/testing_losses_L2.csv", testing_losses_L2, delimiter=',' )
-    np.savetxt( test_folder + "/testing_losses_gCNR.csv", testing_losses_gCNR, delimiter=',' )
+    np.savetxt( results_folder + "/testing_losses_L2.csv", testing_losses_L2, delimiter=',' )
+    np.savetxt( results_folder + "/testing_losses_gCNR.csv", testing_losses_gCNR, delimiter=',' )
     
-    np.savetxt( test_folder + "/training_losses_L2.csv", training_losses_L2, delimiter=',' )
-    np.savetxt( test_folder + "/training_losses_gCNR.csv", training_losses_gCNR, delimiter=',' )
+    np.savetxt( results_folder + "/training_losses_L2.csv", training_losses_L2, delimiter=',' )
+    np.savetxt( results_folder + "/training_losses_gCNR.csv", training_losses_gCNR, delimiter=',' )
 
-    np.savetxt( test_folder + "/condition_numbers.csv", condition_numbers, delimiter=',' )
-    
-    # Write description of test to file so you don't forget what you did
-    with open(test_folder + '/test_description.txt', 'w') as f:
-        f.write(f"Original test name: {test_folder}\n")
-        f.write(f"Training dataset used: {training_set}\n")
-        f.write(f"Testing dataset used: {testing_set}\n")
-        f.write(f"Optimization parameters: {opt_params}\n")
-        f.write(f"Target type: {target_type}\n")
-
-        f.write(f"Number of training epochs: {num_epochs}\n")
-        f.write(f"Training shuffle: {training_shuffle}\n")
-        f.write(f"Descent algorithm: {desc_alg}\n")
-        f.write(f"Loss function: {loss_func}\n")
-        if WeightProj is not None:
-            WeightProj = WeightProj.__class__.__name__
-        f.write(f"Amplitude weight projection: {WeightProj}\n")
- 
-        f.write(f"Training resolution warmup: {training_resolution}\n\n")
-        f.write(f"Learning rate: {lrate}\n")
-        f.write(f"Scheduler? {sched}\n")
-        f.write(f"Momentum: {momentum}\n")
-        
-        f.write(f"Image pixel size: {image_dims}\n")
-        f.write(f"Noise parameters [BW, SNR]: {noise_param}\n")
-        f.write(f"Tikhonov Regularization parameter: {tik_param}\n")
-        
-        f.write(f"Dynamic range minimum: {dB_min}\n")
-        f.write(f"Smooth histogram parameters: {hist_param}\n")
-        f.write("Other notes:\n")
-        f.write(f"{notes}")
+    np.savetxt( results_folder + "/condition_numbers.csv", condition_numbers, delimiter=',' )

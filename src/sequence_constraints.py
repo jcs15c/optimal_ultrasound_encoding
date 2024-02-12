@@ -2,8 +2,8 @@ import numpy as np
 import torch
 
 """
-Define several projection operators to add constraints on our weights,
-or else in the presence of noise, the optimal solution is to make each
+Define several projection operators to add constraints on our sequence.
+Otherwise in the presence of noise, the optimal solution is to make each
 arbitrarily large
 """
 
