@@ -60,45 +60,45 @@ if __name__ == "__main__":
 
     N_data = 50
 
-    ## Store results for lesions
-    # isolated_point_delay_opt = np.zeros( min( len( isolated_point_dataset ), N_data ) )
-    # isolated_point_weight_opt = np.zeros( min( len( isolated_point_dataset ), N_data ) )
+    # Store results for lesions
+    isolated_point_delay_opt = np.zeros( min( len( isolated_point_dataset ), N_data ) )
+    isolated_point_weight_opt = np.zeros( min( len( isolated_point_dataset ), N_data ) )
 
-    # for i in range(min(N_data, len(isolated_point_dataset))):
-    #     delay_opt_model, weight_opt_model = get_models( isolated_point_acq_params, [-25, 25, 15, 55], False )
+    for i in range(min(N_data, len(isolated_point_dataset))):
+        delay_opt_model, weight_opt_model = get_models( isolated_point_acq_params, [-25, 25, 15, 55], False )
 
-    #     datas, locs = [torch.tensor( x ).unsqueeze(0) for x in isolated_point_dataset[i]]
+        datas, locs = [torch.tensor( x ).unsqueeze(0) for x in isolated_point_dataset[i]]
 
-    #     target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
+        target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
 
-    #     isolated_point_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
-    #     isolated_point_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
+        isolated_point_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
+        isolated_point_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
 
-    # underdeveloped_speckle_delay_opt = np.zeros( min( len( underdeveloped_speckle_dataset ), N_data ) )
-    # underdeveloped_speckle_weight_opt = np.zeros( min( len( underdeveloped_speckle_dataset ), N_data ) )
+    underdeveloped_speckle_delay_opt = np.zeros( min( len( underdeveloped_speckle_dataset ), N_data ) )
+    underdeveloped_speckle_weight_opt = np.zeros( min( len( underdeveloped_speckle_dataset ), N_data ) )
 
-    # for i in range(min(N_data, len(underdeveloped_speckle_dataset))):
-    #     delay_opt_model, weight_opt_model = get_models( underdeveloped_speckle_acq_params, [-25, 25, 15, 55], False )
+    for i in range(min(N_data, len(underdeveloped_speckle_dataset))):
+        delay_opt_model, weight_opt_model = get_models( underdeveloped_speckle_acq_params, [-25, 25, 15, 55], False )
 
-    #     datas, locs = [torch.tensor( x ).unsqueeze(0) for x in underdeveloped_speckle_dataset[i]]
+        datas, locs = [torch.tensor( x ).unsqueeze(0) for x in underdeveloped_speckle_dataset[i]]
 
-    #     target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
+        target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
 
-    #     underdeveloped_speckle_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
-    #     underdeveloped_speckle_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
+        underdeveloped_speckle_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
+        underdeveloped_speckle_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
 
-    # anechoic_lesion_delay_opt = np.zeros( min( len( anechoic_lesion_dataset ), N_data ) )
-    # anechoic_lesion_weight_opt = np.zeros( min( len( anechoic_lesion_dataset ), N_data ) )
+    anechoic_lesion_delay_opt = np.zeros( min( len( anechoic_lesion_dataset ), N_data ) )
+    anechoic_lesion_weight_opt = np.zeros( min( len( anechoic_lesion_dataset ), N_data ) )
 
-    # for i in range(min(N_data, len(anechoic_lesion_dataset))):
-    #     delay_opt_model, weight_opt_model = get_models( anechoic_lesion_acq_params,[-25, 25, 15, 55], False )
+    for i in range(min(N_data, len(anechoic_lesion_dataset))):
+        delay_opt_model, weight_opt_model = get_models( anechoic_lesion_acq_params,[-25, 25, 15, 55], False )
         
-    #     datas, locs = [torch.tensor( x ).unsqueeze(0) for x in anechoic_lesion_dataset[i]]
+        datas, locs = [torch.tensor( x ).unsqueeze(0) for x in anechoic_lesion_dataset[i]]
 
-    #     target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
+        target = delay_opt_model.get_targets( datas, locs, 'synthetic' )
 
-    #     anechoic_lesion_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
-    #     anechoic_lesion_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
+        anechoic_lesion_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, locs ) - target ) )
+        anechoic_lesion_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, locs ) - target ) )
 
     image_derived_delay_opt = np.zeros( min( len( image_derived_dataset ), N_data ) )
     image_derived_weight_opt = np.zeros( min( len( image_derived_dataset ), N_data ) )
@@ -115,23 +115,23 @@ if __name__ == "__main__":
         image_derived_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, cmap ) - target ) )
         print( i, image_derived_delay_opt[i] )
 
-    # binary_image_delay_opt = np.zeros( min( len( binary_image_dataset ), N_data ) )
-    # binary_image_weight_opt = np.zeros( min( len( binary_image_dataset ), N_data ) )
+    binary_image_delay_opt = np.zeros( min( len( binary_image_dataset ), N_data ) )
+    binary_image_weight_opt = np.zeros( min( len( binary_image_dataset ), N_data ) )
 
-    # for i in range(min(N_data, len(binary_image_dataset))):
-    #     # print("Binary Image: ", i, "of", min(N_data, len(binary_image_dataset)))
-    #     delay_opt_model, weight_opt_model = get_models( binary_image_acq_params, [-20, 20, 22, 52], False )
+    for i in range(min(N_data, len(binary_image_dataset))):
+        # print("Binary Image: ", i, "of", min(N_data, len(binary_image_dataset)))
+        delay_opt_model, weight_opt_model = get_models( binary_image_acq_params, [-20, 20, 22, 52], False )
 
-    #     datas, cmap = [torch.tensor( x ).unsqueeze(0) for x in binary_image_dataset[i]]
+        datas, cmap = [torch.tensor( x ).unsqueeze(0) for x in binary_image_dataset[i]]
 
-    #     target = delay_opt_model.get_targets( datas, cmap, 'image_synthetic' )
+        target = delay_opt_model.get_targets( datas, cmap, 'image_synthetic' )
 
-    #     binary_image_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, cmap ) - target ) )
-    #     binary_image_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, cmap ) - target ) )
+        binary_image_delay_opt[i] = torch.mean( torch.square( delay_opt_model.get_image_prediction( datas, cmap ) - target ) )
+        binary_image_weight_opt[i] = torch.mean( torch.square( weight_opt_model.get_image_prediction( datas, cmap ) - target ) )
 
     print( "Delay Only, Weight Only" )
-    # print( "Isolated Points: ",     np.mean( isolated_point_delay_opt ),         np.mean( isolated_point_weight_opt ) )
-    # print( "Low Density Speckle: ", np.mean( underdeveloped_speckle_delay_opt ), np.mean( underdeveloped_speckle_weight_opt ) )
-    # print( "Anechoic Lesions: ",    np.mean( anechoic_lesion_delay_opt ),        np.mean( anechoic_lesion_weight_opt ) )
+    print( "Isolated Points: ",     np.mean( isolated_point_delay_opt ),         np.mean( isolated_point_weight_opt ) )
+    print( "Low Density Speckle: ", np.mean( underdeveloped_speckle_delay_opt ), np.mean( underdeveloped_speckle_weight_opt ) )
+    print( "Anechoic Lesions: ",    np.mean( anechoic_lesion_delay_opt ),        np.mean( anechoic_lesion_weight_opt ) )
     print( "Image Derived: ",       np.mean( image_derived_delay_opt ),          np.mean( image_derived_weight_opt ) )
-    # print( "Binary Image: ",        np.mean( binary_image_delay_opt ),           np.mean( binary_image_weight_opt ) )
+    print( "Binary Image: ",        np.mean( binary_image_delay_opt ),           np.mean( binary_image_weight_opt ) )
