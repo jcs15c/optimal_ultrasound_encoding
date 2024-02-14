@@ -58,7 +58,7 @@ default_opt_params = {
 }
 
 default_enc_params = {
-    'noise_params': {'BW': 0.7, 'SNR': 12},
+    'noise_params': None,
     'tik_param': 0.1
 }
 
