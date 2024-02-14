@@ -7,7 +7,7 @@ def gCNR_loss( predictions, targets, locs, bf_params ):
     """
     Loss function given by average gCNR in an image
     """
-    return -ui.mean_gCNR( predictions, locs, bf_params, hist_params=bf_params['hist_params'], roi_pads=bf_params['roi_pads'] )
+    return -ui.average_gCNR( predictions, locs, bf_params, hist_params=bf_params['hist_params'], roi_pads=bf_params['roi_pads'] )
 
 def anechoic_loss( predictions, targets, locs, bf_params ):
     """

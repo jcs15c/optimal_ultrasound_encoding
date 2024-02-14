@@ -187,7 +187,7 @@ def calc_delays_phasedfocused(beams,span,focus,apex=0):
         delays[i,:]=(r0-r)/s.c; 
     return s.fs * delays
 
-def calc_delays_planewaves(beams, span):
+def calc_delays_planewaves(beams, span=None, spacing=None):
     """
     Compute delays for steered planewave transmission
     
@@ -199,7 +199,14 @@ def calc_delays_planewaves(beams, span):
         Encoding delays
     """
     delays = torch.empty([beams,s.tx_pos.shape[0]], dtype=s.PTFLOAT)
-    angles = torch.deg2rad(span * torch.linspace(-1.0, 1.0, steps=beams) / 2)
+
+    if span is not None:
+        angles = torch.deg2rad(span * torch.linspace(-1.0, 1.0, steps=beams) / 2)
+    elif spacing is not None:
+        angles = torch.deg2rad(spacing * beams * torch.linspace(-1.0, 1.0, steps=beams) / 2)
+    else:
+        raise ValueError("Either span or separation must be specified")
+
     for (i,angle) in enumerate(angles):
         delays[i,:] = s.tx_pos[:,0] * torch.sin(angle) / s.c
     return s.fs * delays
@@ -226,6 +233,19 @@ def calc_delays_beamforming( rx_pos, x, z ):
                                      torch.square(zg - pos[2]))
         
     return bf_delays.T
+
+def calc_delays_zeros( beams ):
+    """
+    "Compute" an array of zero delays
+    
+    Parameters:
+        beams - The number of transmissions to generate weights for
+        
+    Returns:
+        Encoding delays
+    """
+
+    return torch.zeros( [beams, s.tx_pos.shape[0]] )
 
 def calc_uniform_weights( beams, value=1.0 ):
     """

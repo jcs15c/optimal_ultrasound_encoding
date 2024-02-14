@@ -213,8 +213,8 @@ def create_target_mask( locs, bf_params, roi_pads=1.0 ):
 
     # get array of angles
     angles = torch.atan2( -locs[:,:,2], locs[:,:,0] )
-    xpts = torch.linspace( bf_params['image_range'][0], bf_params['image_range'][1], bf_params['image_dims'][0] )
-    zpts = torch.linspace( bf_params['image_range'][2], bf_params['image_range'][3], bf_params['image_dims'][1] )
+    xpts = torch.linspace( bf_params['image_range'][0], bf_params['image_range'][1], bf_params['image_dims'][0] ) / 1000
+    zpts = torch.linspace( bf_params['image_range'][2], bf_params['image_range'][3], bf_params['image_dims'][1] ) / 1000
 
     Z, X = torch.meshgrid( zpts, xpts, indexing='ij' )
     mask = torch.zeros( [locs.shape[0], Z.shape[0], Z.shape[1]], dtype=torch.bool )
@@ -280,8 +280,7 @@ def partial_histogram_matching( env, locs, bf_params, mu_Y, sigma_Y ):
             rescaled_env[i] = env[i]
     return rescaled_env
 
-
-def mean_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smooth=True, truncated=False, roi_pads=[1.0, 1.0] ):
+def average_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smooth=True, truncated=False, roi_pads=[1.0, 1.0] ):
     """
     Compute the gCNR for an array of images need to get the mask, figure out which 
     pixels are in/outside of the lesions, then compute histogram overlap.
@@ -338,3 +337,83 @@ def mean_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smoot
             gCNRs[i] = 1 - torch.min( hist_A, hist_B ).sum()   
             
     return torch.mean( gCNRs )
+
+def binned_average_gCNR( env, locs, bf_params, gCNR_bin_count, hist_bin_count=100, rpads=[1.0, 1.0] ):
+    """
+    Compute the gCNR in a 3x3 grid along the imaging domain.
+    Counts the running total of gCNRs and the number of lesions in each bin
+      so that the value can be added across multiple images
+    """
+    gCNR_sums = torch.zeros( (gCNR_bin_count, gCNR_bin_count) )
+    lesion_counts = torch.zeros( (gCNR_bin_count, gCNR_bin_count) )
+
+    xpts = torch.linspace( bf_params['image_range'][0], bf_params['image_range'][1], bf_params['image_dims'][0] ) / 1000
+    zpts = torch.linspace( bf_params['image_range'][2], bf_params['image_range'][3], bf_params['image_dims'][1] ) / 1000
+
+    Z, X = torch.meshgrid( zpts, xpts, indexing='ij' )
+    
+    [m, M] = [env.min().item(), env.max().item()]
+    
+    for i in range( locs.shape[0] ):
+        x0 = locs[i,0]
+        z0 = locs[i,2]
+        r0 = locs[i,3]
+
+        outer_radius = 2 * r0
+
+        the_lesion = torch.zeros_like( env, dtype=torch.bool ) + ( (X - x0)**2  + (Z - z0)**2 <= (rpads[0]*r0)**2 )
+        speckle_ring = torch.zeros_like( env, dtype=torch.bool ) + ( (X - x0)**2  + (Z - z0)**2 > (rpads[1]*r0)**2 )
+        speckle_ring = speckle_ring * ( (X - x0)**2  + (Z - z0)**2 < (outer_radius)**2 )
+        all_speckle = ~torch.zeros_like(env, dtype=torch.bool)
+        for j in range(locs.shape[0]):
+            x1 = locs[j,0]
+            z1 = locs[j,2]
+            r1 = locs[j,3]
+            all_speckle = all_speckle * ( (X - x1)**2  + (Z - z1)**2 > (rpads[1]*r1)**2 )
+
+        # A gets all the pixels that are in the lesion
+        A = env[the_lesion]
+
+        # B gets all the pixels that are in the speckle ring and all_speckle
+        B = env[speckle_ring * all_speckle]
+
+        if A.numel() == 0 or B.numel() == 0:
+            continue
+        
+        gCNRs = 1 - torch.min( torch.histc( A, bins=hist_bin_count, min=m, max=M ) / A.numel(), \
+                               torch.histc( B, bins=hist_bin_count, min=m, max=M ) / B.numel() ).sum()
+        
+        x_index = int((x0 * 1000 - bf_params['image_range'][0] ) / (bf_params['image_range'][1] - bf_params['image_range'][0]) * gCNR_bin_count)
+        z_index = int((z0 * 1000 - bf_params['image_range'][2] ) / (bf_params['image_range'][3] - bf_params['image_range'][2]) * gCNR_bin_count)
+
+        x_index = max(0, min(x_index, gCNR_bin_count - 1))
+        z_index = max(0, min(z_index, gCNR_bin_count - 1))
+
+        gCNR_sums[x_index, z_index] += gCNRs
+        lesion_counts[x_index, z_index] += 1
+
+    return gCNR_sums, lesion_counts
+
+def resize_images( cmaps, xpx, zpx ):
+    return torch.nn.functional.interpolate( cmaps.view(cmaps.shape[0], 1, cmaps.shape[1], cmaps.shape[2]), (zpx, xpx)).view(cmaps.shape[0], zpx, xpx)
+
+def gaussian_blur(input_tensor, kernel_size=3, sigma=1.0):
+    kernel_size = int( kernel_size // 2 )
+
+    # Create 2D Gaussian kernel
+    kernel = torch.tensor([np.exp(-(x - kernel_size)**2/float(2*sigma**2)) for x in range(2 * kernel_size)], dtype=s.PTFLOAT)
+    kernel = kernel / kernel.sum()
+
+    # Reshape the kernel to have dimensions [1, 1, kH, kW]
+    kernel = kernel.view(1, 1, -1, 1)
+
+    # Pad the input tensor to handle borders
+    padding = (kernel_size, kernel_size, kernel_size, kernel_size)
+
+    input_tensor = torch.nn.functional.pad(input_tensor, padding, mode='reflect')
+    
+    # Apply convolution with the Gaussian kernel
+    blurred_tensor = torch.nn.functional.conv2d(input_tensor, kernel, stride=1, groups=input_tensor.shape[1])
+    cropped_tensor = blurred_tensor[:, :, kernel_size:-kernel_size, kernel_size:-kernel_size]
+    
+    return cropped_tensor

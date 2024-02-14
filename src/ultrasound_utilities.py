@@ -30,6 +30,33 @@ class UltrasoundDataset( torch.utils.data.Dataset ):
         return np.load( self.data_dir + '/' + self.data_names.iloc[idx, 0]).astype( s.NPFLOAT ), \
                np.load( self.data_dir + '/' + self.loc_names.iloc[idx, 0]).astype( s.NPFLOAT )
 
+class UltrasoundImageDataset( torch.utils.data.Dataset ):
+    """
+    Return RF data and locations within a given folder
+    """
+    def __init__(self, data_directory):
+        """
+        Load filenames for each piece of data
+        """
+        self.data_dir = data_directory
+        self.data_names = pd.read_csv( data_directory + '/data_filenames.csv' )
+        self.loc_names = pd.read_csv( data_directory + '/cmap_filenames.csv' )
+        
+    def __len__(self):
+        return len(self.data_names)
+    
+    def __getitem__(self, idx):
+        """
+        Return RF data and locationd data
+        """
+        return np.load( self.data_dir + '/' + self.data_names.iloc[idx, 0]).astype( s.NPFLOAT ), \
+               np.load( self.data_dir + '/' + self.loc_names.iloc[idx, 0]).astype( s.NPFLOAT )
+    
+    def get_named_item(self, idx):
+        return np.load( self.data_dir + '/' + self.data_names.iloc[idx, 0]).astype( s.NPFLOAT ), \
+               np.load( self.data_dir + '/' + self.loc_names.iloc[idx, 0]).astype( s.NPFLOAT ), \
+               self.data_names.iloc[idx, 0].replace('_data', '').replace('.npy', '')
+
 class SoftHistogram(torch.nn.Module):
     """
     Define the smooth histogram function for use in automatic differentiation
