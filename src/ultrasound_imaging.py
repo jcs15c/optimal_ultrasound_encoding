@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 
+from scipy.ndimage import binary_dilation
+
 import src.settings as s
 import src.ultrasound_utilities as uu
 
@@ -240,14 +242,14 @@ def create_target_mask( locs, bf_params, roi_pads=1.0 ):
             mask[k] = ~mask[k]
     return ~mask
 
-def partial_histogram_matching( env, locs, bf_params, mu_Y, sigma_Y ):
+def partial_histogram_matching( envs, locs, bf_params, mu_Y, sigma_Y ):
     """
     Scale the image so that the mean and variance of it's spackle pattern matches
-    that of a refernce (mu_Y, sigma_Y). Assumes that env is an array of 
+    that of a refernce (mu_Y, sigma_Y). Assumes that envs is an array of 
     images (num_images x xpx x zpx)
     
     Parameters:
-        env - Complex envelope for the image
+        envs - Complex envelope for the image
         locs - Locations for imaging targets, stored in [x, y, z, radius] values.
                 If radius is nonpositive, target is a point target
         image_grid - [xpts, zpts] Coordinates of each pixel in image (mm)
@@ -256,29 +258,35 @@ def partial_histogram_matching( env, locs, bf_params, mu_Y, sigma_Y ):
     Returns:
         Scaled complex envelope
     """
-    rescaled_env = torch.zeros( env.shape )
+    rescaled_envs = torch.zeros( envs.shape )
    
-    target_mask = ~create_target_mask( locs, bf_params )
-    
-    # Only want to consider middle fifth of image to avoid FOV issues
-    trunc_mask = torch.zeros( env.shape, dtype=torch.bool )
-    trunc_mask[:, int(trunc_mask.shape[1]*0.4):int(trunc_mask.shape[1]*0.6), 
-                  int(trunc_mask.shape[2]*0.4):int(trunc_mask.shape[2]*0.6)] = 1
+    if len( locs.shape ) == 4:
+        target_mask = ~create_target_mask( locs, bf_params )
 
-    dim = trunc_mask * target_mask
-     
-    for i in range( env.shape[0] ):
-        if locs[i,0,3] > 0: # Indicates that this image has lesions
-            sigma_X = torch.std( env[i, dim[i]] )
-            mu_X = torch.mean( env[i, dim[i]] )
+        # Only want to consider middle fifth of image to avoid FOV issues
+        trunc_mask = torch.zeros( envs.shape, dtype=torch.bool )
+        trunc_mask[:, int(trunc_mask.shape[1]*0.4):int(trunc_mask.shape[1]*0.6), 
+                      int(trunc_mask.shape[2]*0.4):int(trunc_mask.shape[2]*0.6)] = 1
+
+        dim = trunc_mask * target_mask
+    else:
+        resized_cmaps = resize_images( locs, envs.shape[2], envs.shape[1] ) != 0
+        selem = np.ones( [9, 9] )
+        dim =  [~binary_dilation( ~cmap, structure=selem ) for cmap in resized_cmaps]
+    
+
+    for i in range( envs.shape[0] ):
+        if locs[i,0,3] > 0 or len(locs.shape) == 3: # Indicates that this image has lesions
+            sigma_X = torch.std( envs[i, dim[i]] )
+            mu_X = torch.mean( envs[i, dim[i]] )
         
             a = sigma_Y / sigma_X
             b = mu_Y - a*mu_X
     
-            rescaled_env[i] = a*env[i] + b        
+            rescaled_envs[i] = a*envs[i] + b        
         else:  # Do nothing if point targets
-            rescaled_env[i] = env[i]
-    return rescaled_env
+            rescaled_envs[i] = envs[i]
+    return rescaled_envs
 
 def average_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smooth=True, truncated=False, roi_pads=[1.0, 1.0] ):
     """
@@ -394,6 +402,57 @@ def binned_average_gCNR( env, locs, bf_params, gCNR_bin_count, hist_bin_count=10
 
     return gCNR_sums, lesion_counts
 
+def binary_image_gCNR( env, cmap, bf_params, hist_param=[100, 3], smooth=True ):
+    """
+    Compute the gCNR for an array of images. Need to get the mask, figure out which 
+    pixels are in/outside of the lesions, then compute histogram overlap.
+    gCNR is 1 - overlap, and less overlap is better. Want to maximize this value
+    
+    Parameters:
+        env - Array of complex envelopes for image predictions
+        locs - Locations for imaging targets, stored in [x, y, z, radius] values.
+                If radius is nonpositive, target is a point target
+        image_grid - [xpts, zpts] Coordinates of each pixel in image (mm)
+        hist_param - [bins, smoothing parameter] for smooth histogram calculations
+        smooth - If true, use smooth histogram for calculations
+        truncated - If true, only compute gCNR of middle 5th of image
+        rpad - [inner radius, outer radius] Padding for pixels in gCNR calculation
+        
+    Returns:
+        the average generalized Contrast to Noise Ratio over all lesions in an image
+    """
+    bins, sigma = hist_param[0], hist_param[1]
+    
+    resized_cmap = resize_images( cmap.unsqueeze(0), bf_params['image_dims'][0], bf_params['image_dims'][1] )[0] != 0
+
+    selem = np.ones( [9, 9] )
+
+    inside = ~binary_dilation( ~resized_cmap, structure=selem )
+    outside = ~binary_dilation( resized_cmap )
+
+    if smooth == True: # Need this to be true if we want to optimize on this value
+        A = env[inside]
+        B = env[outside]
+        
+        m = env.min()
+        M = env.max()
+        
+        hist_A = uu.SoftHistogram( bins=bins, min=m, max=M, sigma=sigma )( A ) / A.numel()         
+        hist_B = uu.SoftHistogram( bins=bins, min=m, max=M, sigma=sigma )( B ) / B.numel()
+        
+        return 1 - torch.min( hist_A, hist_B ).sum()
+    else:
+        A = env[inside]
+        B = env[outside]
+        
+        m = env.min()
+        M = env.max()
+        
+        hist_A = torch.histc( A, bins=bins, min=m.item(), max=M.item() ) / A.numel()           
+        hist_B = torch.histc( B, bins=bins, min=m.item(), max=M.item() ) / B.numel()
+        
+        return 1 - torch.min( hist_A, hist_B ).sum()  
+    
 def resize_images( cmaps, xpx, zpx ):
     return torch.nn.functional.interpolate( cmaps.view(cmaps.shape[0], 1, cmaps.shape[1], cmaps.shape[2]), (zpx, xpx)).view(cmaps.shape[0], zpx, xpx)
 
@@ -417,3 +476,4 @@ def gaussian_blur(input_tensor, kernel_size=3, sigma=1.0):
     cropped_tensor = blurred_tensor[:, :, kernel_size:-kernel_size, kernel_size:-kernel_size]
     
     return cropped_tensor
+
