@@ -242,7 +242,7 @@ def create_target_mask( locs, bf_params, roi_pads=1.0 ):
             mask[k] = ~mask[k]
     return ~mask
 
-def partial_histogram_matching( envs, locs, bf_params, mu_Y, sigma_Y ):
+def partial_histogram_matching( envs, locs, bf_params, mu_Y, sigma_Y, trunc=[0.4, 0.6] ):
     """
     Scale the image so that the mean and variance of it's spackle pattern matches
     that of a refernce (mu_Y, sigma_Y). Assumes that envs is an array of 
@@ -260,13 +260,13 @@ def partial_histogram_matching( envs, locs, bf_params, mu_Y, sigma_Y ):
     """
     rescaled_envs = torch.zeros( envs.shape )
    
-    if len( locs.shape ) == 4:
+    if locs.shape[2] == 4:
         target_mask = ~create_target_mask( locs, bf_params )
 
         # Only want to consider middle fifth of image to avoid FOV issues
         trunc_mask = torch.zeros( envs.shape, dtype=torch.bool )
         trunc_mask[:, int(trunc_mask.shape[1]*0.4):int(trunc_mask.shape[1]*0.6), 
-                      int(trunc_mask.shape[2]*0.4):int(trunc_mask.shape[2]*0.6)] = 1
+                      int(trunc_mask.shape[2]*trunc[0]):int(trunc_mask.shape[2]*trunc[1])] = 1
 
         dim = trunc_mask * target_mask
     else:
@@ -287,6 +287,64 @@ def partial_histogram_matching( envs, locs, bf_params, mu_Y, sigma_Y ):
         else:  # Do nothing if point targets
             rescaled_envs[i] = envs[i]
     return rescaled_envs
+
+def gCNR( env, loc, bf_params, filter_nan=True ):
+    """
+    Compute the gCNR for each lesion in an image.
+    Need to get the mask, figure out which pixels are in/outside of the lesions,
+    then compute histogram overlap.
+    gCNR is 1 - overlap, and less overlap is better. Want to maximize this value
+    
+    Parameters:
+        env - Complex envelope/B-mode image
+        loc - Locations for imaging targets, stored in [x, y, z, radius] values.
+                If radius is nonpositive, target is a point target
+        loc_idx - Index of the lesion to compute gCNR for
+        bf_params - parameters for beamforming (resolution, range, roi radii)
+        
+    Returns:
+        the generalized Contrast to Noise Ratio
+    """
+    gCNRs = torch.zeros( loc.shape[0] )
+    
+    xpts = torch.linspace( bf_params['image_range'][0], bf_params['image_range'][1], bf_params['image_dims'][0] ) / 1000
+    zpts = torch.linspace( bf_params['image_range'][2], bf_params['image_range'][3], bf_params['image_dims'][1] ) / 1000
+    Z, X = torch.meshgrid( zpts, xpts, indexing='ij' )
+    
+    [m, M] = [env.min().item(), env.max().item()]
+
+
+    for i in range(loc.shape[0]):
+        x0 = loc[i,0]
+        z0 = loc[i,2]
+        r0 = loc[i,3]
+
+        the_lesion = torch.zeros_like( env, dtype=torch.bool ) + ( (X - x0)**2  + (Z - z0)**2 <= (bf_params['roi_pads'][0]*r0)**2 )
+        speckle_ring = torch.zeros_like( env, dtype=torch.bool ) + ( (X - x0)**2  + (Z - z0)**2 > (bf_params['roi_pads'][1]*r0)**2 )
+        speckle_ring = speckle_ring * ( (X - x0)**2  + (Z - z0)**2 < (2 * bf_params['roi_pads'][1] * r0)**2 )
+        all_speckle = ~torch.zeros_like(env, dtype=torch.bool)
+        for j in range(loc.shape[0]):
+            x1 = loc[j,0]
+            z1 = loc[j,2]
+            r1 = loc[j,3]
+            all_speckle = all_speckle * ( (X - x1)**2  + (Z - z1)**2 > (bf_params['roi_pads'][1]*r1)**2 )
+
+        # A gets all the pixels that are in the lesion
+        A = env[the_lesion]
+
+        # B gets all the pixels that are in the speckle ring and all_speckle
+        B = env[speckle_ring * all_speckle]
+
+        if A.numel() == 0 or B.numel() == 0:
+            gCNRs[i] = torch.nan
+        else:
+            gCNRs[i] = 1 - torch.min( torch.histc( A, bins=bf_params['hist_params']['bins'], min=m, max=M ) / A.numel(), \
+                                    torch.histc( B, bins=bf_params['hist_params']['bins'], min=m, max=M ) / B.numel() ).sum()
+        
+    if filter_nan:
+        gCNRs = gCNRs[~torch.isnan(gCNRs)]
+    
+    return gCNRs
 
 def average_gCNR( env, locs, bf_params, hist_params={'bins': 100, 'sigma':3}, smooth=True, truncated=False, roi_pads=[1.0, 1.0] ):
     """

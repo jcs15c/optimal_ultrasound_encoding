@@ -57,6 +57,7 @@ class UltrasoundImageDataset( torch.utils.data.Dataset ):
                np.load( self.data_dir + '/' + self.loc_names.iloc[idx, 0]).astype( s.NPFLOAT ), \
                self.data_names.iloc[idx, 0].replace('_data', '').replace('.npy', '')
 
+
 class SoftHistogram(torch.nn.Module):
     """
     Define the smooth histogram function for use in automatic differentiation
