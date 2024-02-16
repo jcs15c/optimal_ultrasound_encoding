@@ -1,7 +1,10 @@
 # Optimal Ultrasound Encoding
 
 This package contains methods to find optimal encoding sequences for use in synthetic transmit aperture ultrasound imaging. 
-The module `encoding_optimization.py` contains the primary function to perform the optimization. An example execution script is provided in the `examples` folder. Sample RF data to used for training can be found in the latest release.
+
+The module `encoding_optimization.py` contains the primary function to perform the optimization and generate an optimized encoding sequence. An example execution script is provided in the `examples` folder. 
+
+Collections of sample RF data to used for training can be found in the latest release, along with simulated and experimentally acquired data used for validation of the model. Examples of optimized sequences can also be found in the latest release.
 
 # Dependencies
 
