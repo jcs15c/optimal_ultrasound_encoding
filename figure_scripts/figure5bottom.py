@@ -4,9 +4,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Bbox
 
-import src.ultrasound_imaging as ui
 import src.ultrasound_utilities as uu
 import src.ultrasound_encoding as ue
 import src.settings as s
@@ -14,10 +12,10 @@ from src.predictor_model import PredictorModel
 
 import scipy
 import scipy.io
-import os
 
 import torch
 
+######################### Generate data for the plot #########################
 ## Load the data to work on
 dataset = uu.UltrasoundDataset( f"./data/single_point_grid_data" )
 acq_params = scipy.io.loadmat( f"./data/single_point_grid_data/acq_params.mat" )
@@ -28,6 +26,9 @@ bf_params = s.default_bf_params
 bf_params['image_range'] = [-25, 25, 15, 55]
 bf_params['roi_pads'] = [0.8, 1.2]
 flipped_range = [-25, 25, 55, 15]
+
+## Pull the sequences from files, or generate them
+##  and define the PyTorch model with each sequence
 
 # Optimized
 opt_delays = torch.tensor( np.loadtxt( f"optimized_sequences/full_parameterization/delays.csv", delimiter="," ), dtype=s.PTFLOAT  )
@@ -54,8 +55,11 @@ for model in models:
     model.delays.requires_grad = False
     model.weights.requires_grad = False
 
+# Set minimum detectability for cystic resolution
 contrast = -20
 
+# Store the cystic resolution at each point in the dataset 
+#  along with the (x, z) coordinate of each
 opt_cystic_resolutions = np.zeros( (len(dataset), 3 ) )
 narrow_cystic_resolutions = np.zeros( (len(dataset), 3 ) )
 wide_cystic_resolutions = np.zeros( (len(dataset), 3 ) )
@@ -63,7 +67,6 @@ hadamard_cystic_resolutions = np.zeros( (len(dataset), 3 ) )
 
 for i in range( len(dataset) ):
     [data, loc] = [torch.tensor( x ) for x in dataset[i]]
-    print( i, '/', len(dataset) )
 
     opt_cystic_resolutions[i][0] = loc[0,0]
     opt_cystic_resolutions[i][1] = loc[0,2]
@@ -81,11 +84,12 @@ for i in range( len(dataset) ):
     hadamard_cystic_resolutions[i][1] = loc[0,2]
     hadamard_cystic_resolutions[i][2] = hadamard_model.cystic_resolution( data, loc, contrast )
 
-
 # Get the grid that the targets are on
 unique_x = np.unique( opt_cystic_resolutions[:, 0] )
 unique_z = np.unique( opt_cystic_resolutions[:, 1] )
 x_targets, y_targets = np.meshgrid( unique_x, unique_z )
+
+# Reshape the cystic resolutions to match the grid
 narrow_z = np.zeros_like( x_targets )
 opt_z = np.zeros_like( x_targets )
 wide_z = np.zeros_like( x_targets )
@@ -99,6 +103,7 @@ for i in range( len(opt_cystic_resolutions) ):
     wide_z[z_i, x_i] = wide_cystic_resolutions[i, 2]
     hadamard_z[z_i, x_i] = hadamard_cystic_resolutions[i, 2]
 
+######################### Create the plot #########################
 fig = plt.figure(figsize=(6.5, 7))
 fig.subplots_adjust(wspace=0, hspace=0)
 

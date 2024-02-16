@@ -4,14 +4,11 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Bbox
 
-import src.ultrasound_imaging as ui
 import src.ultrasound_utilities as uu
 import src.ultrasound_encoding as ue
 import src.settings as s
 from src.predictor_model import PredictorModel
-import os
 
 import scipy
 import scipy.io
@@ -19,6 +16,7 @@ import scipy.io
 import torch
 
 if __name__ == "__main__":
+    ######################### Generate data for the plot #########################
     ## Load the data to work on
     image_dataset = uu.UltrasoundImageDataset( f"./data/image_derived_data" )
     image_acq_params = scipy.io.loadmat( f"./data/image_derived_data/acq_params.mat" )
@@ -36,7 +34,7 @@ if __name__ == "__main__":
     bf_params['hist_match'] = False
     dB_min = bf_params['dB_min']
     
-    # Pull the sequences from files, or generate them
+    ## Pull the sequences from files, or generate them
 
     # Optimized
     opt_delays = torch.tensor( np.loadtxt( f"optimized_sequences/full_parameterization/delays.csv", delimiter="," ), dtype=s.PTFLOAT  )
@@ -53,7 +51,25 @@ if __name__ == "__main__":
     wide_weights = ue.calc_uniform_weights( wide_delays.shape[0] )
     wide_sequence = (wide_delays, wide_weights)
 
-    # Make the plot
+    ## Collect the 6 images to plot
+    image_images = []
+    binary_images = []
+    for i, (delays, weights) in enumerate( [narrow_sequence, wide_sequence, opt_sequence] ):
+        # Define the PyTorch model with each sequence
+        image_model = PredictorModel(delays, weights, image_acq_params, enc_params, bf_params )
+        binary_model = PredictorModel(delays, weights, binary_acq_params, enc_params, bf_params )
+
+        for model in [image_model, binary_model]:
+            model.delays.requires_grad = False
+            model.weights.requires_grad = False
+
+        image_env = image_model.get_image_prediction( image_datas, image_locs )[0]
+        binary_image = binary_model.get_image_prediction( binary_datas, binary_locs )[0]
+
+        image_images.append( image_env )
+        binary_images.append( binary_image )
+
+    ######################### Create the plot #########################
     fig = plt.figure(figsize=(13, 6.5))
     fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -64,19 +80,8 @@ if __name__ == "__main__":
 
     plt.rcParams["figure.autolayout"] = True
 
-    for [i, (delays, weights)] in [[0, narrow_sequence], [1, wide_sequence], [2, opt_sequence]]:
-        image_model = PredictorModel(delays, weights, image_acq_params, enc_params, bf_params )
-
-        binary_model = PredictorModel(delays, weights, binary_acq_params, enc_params, bf_params )
-
-        for model in [image_model, binary_model]:
-            model.delays.requires_grad = False
-            model.weights.requires_grad = False
-
-        image_env = image_model.get_image_prediction( image_datas, image_locs )[0]
-        binary_image = binary_model.get_image_prediction( binary_datas, binary_locs )[0]
-
-        im = data_axes[0, i].imshow( image_env, cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+    for i in range( 3 ):
+        im = data_axes[0, i].imshow( image_images[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[0, i].set_yticks( data_axes[0, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[0, i].set_ylabel( "Axial (mm)" )
@@ -87,8 +92,7 @@ if __name__ == "__main__":
         data_axes[0, i].set_xlim( flipped_range[0], flipped_range[1] )
         data_axes[0, i].set_ylim( flipped_range[2], flipped_range[3] )
 
-        # Plot all the synthetic stuff
-        data_axes[1, i].imshow( binary_image, cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+        data_axes[1, i].imshow( binary_images[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[1, i].set_yticks( data_axes[1, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[1, i].set_ylabel( "Axial (mm)" )
@@ -100,7 +104,6 @@ if __name__ == "__main__":
         data_axes[1, i].set_ylim( flipped_range[2], flipped_range[3] )
 
     plt.rcParams["text.usetex"] = True
-    # Plot the y-axis supertitles
     ay1 = fig.add_subplot(gs[1, 0])
     ay1.set_axis_off()
     ay1.text( -0.2, 0.5, r"Arbitrarily"

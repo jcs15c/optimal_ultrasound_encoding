@@ -16,6 +16,7 @@ import scipy.io
 import torch
 
 if __name__ == "__main__":
+    ######################### Generate data for the plot #########################
     ## Load the data to work on
     lesion_dataset = uu.UltrasoundDataset( f"./data/sample_lesion_data" )
     lesion_acq_params = scipy.io.loadmat( f"./data/sample_lesion_data/acq_params.mat" )
@@ -31,7 +32,7 @@ if __name__ == "__main__":
     bf_params['image_range'] = [-25, 25, 15, 55]
     flipped_range = [-25, 25, 55, 15]
     
-    # Pull the sequences from files, or generate them
+    ## Pull the sequences from files, or generate them
 
     # Optimized
     opt_delays = torch.tensor( np.loadtxt( f"optimal_sequences/full_parameterization/delays.csv", delimiter="," ), dtype=s.PTFLOAT  )
@@ -48,7 +49,24 @@ if __name__ == "__main__":
     wide_weights = ue.calc_uniform_weights( wide_delays.shape[0] )
     wide_sequence = (wide_delays, wide_weights)
 
-    # Make the plot
+    ## Collect the 6 images to plot
+    lesion_images = []
+    point_images = []
+
+    for i, (delays, weights) in enumerate( [narrow_sequence, wide_sequence, opt_sequence] ):
+        # Define the PyTorch model with each sequence
+        lesion_model = PredictorModel(delays, weights, lesion_acq_params, enc_params, bf_params )
+        point_model = PredictorModel(delays, weights, point_acq_params, enc_params, bf_params )
+
+        for model in [point_model, lesion_model]:
+            model.delays.requires_grad = False
+            model.weights.requires_grad = False
+
+        # Generate the images
+        lesion_images.append( lesion_model.get_image_prediction( lesion_datas, lesion_locs )[0] )
+        point_images.append( point_model.get_image_prediction( point_datas, point_locs )[0] )
+    
+    ######################### Create the plot #########################
     fig = plt.figure(figsize=(13, 6.5))
     fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -59,19 +77,8 @@ if __name__ == "__main__":
 
     plt.rcParams["figure.autolayout"] = True
 
-    for [i, (delays, weights)] in [[0, narrow_sequence], [1, wide_sequence], [2, opt_sequence]]:
-        point_model = PredictorModel(delays, weights, point_acq_params, enc_params, bf_params )
-
-        lesion_model = PredictorModel(delays, weights, lesion_acq_params, enc_params, bf_params )
-
-        for model in [point_model, lesion_model]:
-            model.delays.requires_grad = False
-            model.weights.requires_grad = False
-
-        lesion_env = lesion_model.get_image_prediction( lesion_datas, lesion_locs )[0]
-        point_env = point_model.get_image_prediction( point_datas, point_locs )[0]
-
-        im = data_axes[0, i].imshow( lesion_env, cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+    for i in range( 3 ):
+        im = data_axes[0, i].imshow( lesion_images[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[0, i].set_yticks( data_axes[0, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[0, i].set_ylabel( "Axial (mm)" )
@@ -83,7 +90,7 @@ if __name__ == "__main__":
         data_axes[0, i].set_ylim( flipped_range[2], flipped_range[3] )
 
         # Plot all the synthetic stuff
-        data_axes[1, i].imshow( point_env, cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+        data_axes[1, i].imshow( point_images[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[1, i].set_yticks( data_axes[1, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[1, i].set_ylabel( "Axial (mm)" )

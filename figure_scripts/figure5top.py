@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Bbox
 
 import src.ultrasound_imaging as ui
 import src.ultrasound_utilities as uu
@@ -14,10 +13,10 @@ from src.predictor_model import PredictorModel
 
 import scipy
 import scipy.io
-import os
 
 import torch
 
+######################### Generate data for the plot #########################
 ## Set up model parameters
 enc_params = s.default_enc_params
 bf_params = s.default_bf_params
@@ -25,10 +24,14 @@ bf_params['image_range'] = [-25, 25, 15, 55]
 bf_params['roi_pads'] = [0.8, 1.2]
 flipped_range = [-25, 25, 55, 15]
 
+## Load the data to work on
 dataset = uu.UltrasoundDataset( f"./data/anechoic_lesion_data" )
 acq_params = scipy.io.loadmat( f"./data/anechoic_lesion_data/acq_params.mat" )
 
-# Optimized
+## Pull the sequences from files, or generate them
+##  and define the PyTorch model with each sequence
+
+# optimized
 opt_delays = torch.tensor( np.loadtxt( f"optimized_sequences/full_parameterization/delays.csv", delimiter="," ), dtype=s.PTFLOAT  )
 opt_weights = torch.tensor( np.loadtxt( f"optimized_sequences/full_parameterization/weights.csv", delimiter="," ), dtype=s.PTFLOAT  )
 opt_model = PredictorModel(opt_delays, opt_weights, acq_params, enc_params, bf_params )
@@ -53,15 +56,15 @@ for model in models:
     model.delays.requires_grad = False
     model.weights.requires_grad = False
 
-## Store results for lesions
-N_data = min( 4, len(dataset) )
+## Look at 50 pieces of data to average gCNR
+N_data = min( 50, len(dataset) )
 
+## Store gCNRs in format of [model, bin_i, bin_j]
 bin_count = 3
 gCNR_sums = torch.zeros( (4, bin_count, bin_count) )
 gCNR_counts = torch.zeros( (4, bin_count, bin_count) )
 
 for i in range( N_data ):
-    print(i + 1, '/', N_data)
     [datas, locs] = [torch.tensor( x ).unsqueeze(0) for x in dataset[i]]
 
     for (n, model) in enumerate( [narrow_model, wide_model, hadamard_model, opt_model] ):
@@ -73,6 +76,7 @@ for i in range( N_data ):
 
 binned_gCNRs = gCNR_sums / gCNR_counts
 
+######################### Create the plot #########################
 fig = plt.figure(figsize=(6.5, 7))
 fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -174,7 +178,6 @@ data_axes[1,1].set_xlabel("Lateral (mm)")
 data_axes[1,1].set_xlim( bf_params['image_range'][0], bf_params['image_range'][1] )
 data_axes[1,1].set_ylim( bf_params['image_range'][3], bf_params['image_range'][2] )
 label_axes[1,1].set_axis_off()
-
 
 # Add the gCNR colorbar
 norm = matplotlib.colors.Normalize(vmin=min_gCNR, vmax=max_gCNR)

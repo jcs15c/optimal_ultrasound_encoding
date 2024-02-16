@@ -2,22 +2,18 @@ import project_root
 import torch
 import src.ultrasound_encoding as ue
 import src.ultrasound_imaging as ui
-import src.ultrasound_utilities as uu
 import src.ultrasound_experiments as ux
-import src.sequence_constraints as sc
 import src.settings as s
-from src.predictor_model import PredictorModel
 
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-import os
-import scipy
-import scipy.io
-
 import numpy as np
 
+######################### Generate data for the plot #########################
+
+## Load the data to work on
 dataset = ux.ExperimentalDataset( f"./data/phantom_data" )
 
 ## Set up model parameters
@@ -28,8 +24,9 @@ bf_params['image_dims'] = [400, 800]
 bf_params['image_range'] = [-30, 8, 12, 65]
 flipped_image_range = [-30, 8, 65, 12]
 
+## Helper function to find the data and acq_params given a name,
+##  and then process the data to an image
 def find_image( name ):
-    # Find the data from the dataset and beamform it
     i = 0
     for i in range(len(dataset)):
         if name in dataset[i][1]['name']:
@@ -39,7 +36,6 @@ def find_image( name ):
     
     data, acq_params = dataset[i]
     data = torch.tensor( data, dtype=s.PTFLOAT )
-    loc = torch.tensor( acq_params['locs'], dtype=s.PTFLOAT )
     delays = torch.tensor( acq_params['delays'], dtype=s.PTFLOAT )
     weights = torch.tensor( acq_params['weights'], dtype=s.PTFLOAT )
 
@@ -62,17 +58,13 @@ def find_image( name ):
 
     return image, acq_params
 
+# Store the average gCNRs
 opt_gCNRs_avg = 0.0
 narrow_gCNRs_avg = 0.0
 middle_gCNRs_avg = 0.0
 wide_gCNRs_avg = 0.0 
 
-fig = plt.figure(figsize=(15, 7))
-width_ratios = [1, 0.01, 1, 0.01, 1, 0.01, 1, 0.01, 0.05]
-height_ratios = [1]
-gs = GridSpec(len(height_ratios), len(width_ratios), figure=fig, width_ratios=width_ratios, height_ratios=height_ratios )#, wspace=0, hspace=0 )
-
-positions = [1]
+positions = [1, 2, 3, 4, 5, 6, 7]
 for pos_idx in positions:
     # Optimized
     opt_image, opt_acq_params = find_image( f"position_{pos_idx}_noiseless_Trained" ) 
@@ -110,55 +102,50 @@ narrow_gCNRs_avg /= len(positions)
 middle_gCNRs_avg /= len(positions)
 wide_gCNRs_avg /= len(positions)
 
-pos_idx = 2
+## Get images of particular one to plot
+images = []
+for name in ["position_1_SP_15_", "position_1_SP_60_", "position_1_SP_150_", "position_1_noiseless_Trained"]:
+    image, acq_params = find_image( name )
+    loc = torch.tensor( acq_params['locs'], dtype=s.PTFLOAT )
+    images.append( ui.partial_histogram_matching(image.unsqueeze(0), loc.unsqueeze(0), bf_params, s.hist_data[0], s.hist_data[1], trunc=[0.1, 1.0])[0] )
+
+## Get the locations from the optimized image for plotting
+opt_image, opt_acq_params = find_image( "position_1_noiseless_Trained" )
+opt_loc = torch.tensor( opt_acq_params['locs'], dtype=s.PTFLOAT )
+
+######################### Create the plot #########################
 fig = plt.figure(figsize=(15, 5.5))
 height_ratios = [1]
 width_ratios = [1, 0.1, 1, 0.1, 1, 0.1, 1, 0.1, 0.05, 0.3, 0.05]
 gs = GridSpec(len(height_ratios), len(width_ratios), figure=fig, width_ratios=width_ratios, height_ratios=height_ratios, wspace=0, hspace=0 )
 
 # Narrow 
-narrow_image, narrow_acq_params = find_image( f"position_{pos_idx}_SP_15_" ) 
-narrow_loc = torch.tensor( narrow_acq_params['locs'], dtype=s.PTFLOAT )
-narrow_image = ui.partial_histogram_matching(narrow_image.unsqueeze(0), narrow_loc.unsqueeze(0), bf_params, s.hist_data[0], s.hist_data[1], trunc=[0.5, 0.8])[0]
-
 ax1 = fig.add_subplot(gs[0])
-im = ax1.imshow( narrow_image, cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
+im = ax1.imshow( images[0], cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
 ax1.set_ylabel( "Axial (mm)")
 ax1.set_xlabel( "Lateral (mm)")
 ax1.set_xticks([-30, -20, -10, 0, 8])
 ax1.set_xticklabels([-30, -20, -10, 0, 8])
 
 # Middle
-middle_image, middle_acq_params = find_image( f"position_{pos_idx}_SP_60_" ) 
-middle_loc = torch.tensor( middle_acq_params['locs'], dtype=s.PTFLOAT )
-middle_image = ui.partial_histogram_matching(middle_image.unsqueeze(0), middle_loc.unsqueeze(0), bf_params, s.hist_data[0], s.hist_data[1], trunc=[0.5, 1.0])[0]
-
 ax2 = fig.add_subplot(gs[2])
-ax2.imshow( middle_image, cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
+ax2.imshow( images[1], cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
 ax2.set_yticklabels([])
 ax2.set_xlabel( "Lateral (mm)")
 ax2.set_xticks([-30, -20, -10, 0, 8])
 ax2.set_xticklabels([-30, -20, -10, 0, 8])
 
 # Wide
-wide_image, wide_acq_params = find_image( f"position_{pos_idx}_SP_150_" ) 
-wide_loc = torch.tensor( wide_acq_params['locs'], dtype=s.PTFLOAT )
-wide_image = ui.partial_histogram_matching(wide_image.unsqueeze(0), wide_loc.unsqueeze(0), bf_params, s.hist_data[0], s.hist_data[1], trunc=[0.0, 1.0])[0]
-
 ax3 = fig.add_subplot(gs[4])
-ax3.imshow( wide_image, cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
+ax3.imshow( images[2], cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
 ax3.set_yticklabels([])
 ax3.set_xlabel( "Lateral (mm)")
 ax3.set_xticks([-30, -20, -10, 0, 8])
 ax3.set_xticklabels([-30, -20, -10, 0, 8])
 
 # Optimized
-opt_image, opt_acq_params = find_image( f"position_{pos_idx}_noiseless_Trained" ) 
-opt_loc = torch.tensor( opt_acq_params['locs'], dtype=s.PTFLOAT )
-opt_image = ui.partial_histogram_matching(opt_image.unsqueeze(0), opt_loc.unsqueeze(0), bf_params, s.hist_data[0], s.hist_data[1], trunc=[0.1, 1.0])[0]
-
 ax4 = fig.add_subplot(gs[6])
-im = ax4.imshow( opt_image, cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
+im = ax4.imshow( images[3], cmap='gray', extent=flipped_image_range, vmin=bf_params['dB_min'], vmax=0 )
 ax4.set_yticklabels([])
 ax4.set_xlabel( "Lateral (mm)")
 ax4.set_xticks([-30, -20, -10, 0, 8])
@@ -174,10 +161,11 @@ plt.rcParams['text.usetex'] = False
 
 snap_vals_x = [-24, -9, 2]
 snap_vals_z = [23, 33, 43, 53, 63]
+
+# Utility function to snap a value to the closest one in an array
 def snap_value( val, snap_vals ):
     return snap_vals[ np.argmin( np.abs( np.array(snap_vals) - np.array(val) ) ) ]
 
-# calc max and min among all gCNRs
 max_gCNR = 1.0
 min_gCNR = 0.8
 

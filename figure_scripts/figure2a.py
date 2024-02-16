@@ -16,15 +16,19 @@ import scipy.io
 import torch
 
 if __name__ == "__main__":
-    ## Set up predictor model parameters
+    ######################### Generate data for the plot #########################
+    # Set up predictor model parameters
     enc_params = s.default_enc_params
     bf_params = s.default_bf_params
     bf_params['image_range'] = [-25, 25, 15, 55]
     flipped_range = [-25, 25, 55, 15]
 
+    # Get sample encoding sequence.
     delays = ue.calc_delays_planewaves( 15, span=75 )
     weights = ue.calc_uniform_weights( 15 )
 
+    # Load the first three kinds of data we can image, which are conventional,
+    #  as well as the PyTorch models that image them
     point_dataset = uu.UltrasoundDataset( f"./data/isolated_point_data" )
     point_acq_params = scipy.io.loadmat( f"./data/isolated_point_data/acq_params.mat" )
     point_model = PredictorModel(delays, weights, point_acq_params, enc_params, bf_params)
@@ -37,27 +41,33 @@ if __name__ == "__main__":
     lesion_acq_params = scipy.io.loadmat( f"./data/anechoic_lesion_data/acq_params.mat" )
     lesion_model = PredictorModel(delays, weights, lesion_acq_params, enc_params, bf_params)
 
-    ################### Plot ###################
+    datasets = [point_dataset, lowdense_dataset, lesion_dataset]
+    models = [point_model, lowdense_model, lesion_model]
+
+    # Get the imaging targets
+    unencoded_targets = []
+    synthetic_targets = []
+
+    for dataset, model in zip( datasets, models ):
+        datas, locs = [ torch.tensor( x ).unsqueeze(0) for x in dataset[0]]
+
+        unencoded_targets.append( model.get_targets( datas, locs, 'unencoded')[0] )
+        synthetic_targets.append( model.get_targets( datas, locs, 'synthetic')[0] )
+
+    ######################### Create the plot #########################
     fig = plt.figure(figsize=(13, 6.5))
     fig.subplots_adjust(wspace=0, hspace=0)
+    plt.rcParams["figure.autolayout"] = True
 
     width_ratios = [0.25, 1, 0.1, 1, 0.1, 1, 0.1, 0.05]
     height_ratios = [0.1, 1, 0.1, 1]
     gs = GridSpec(len(height_ratios), len(width_ratios), figure=fig, width_ratios=width_ratios, height_ratios=height_ratios )
     data_axes = np.array( [[fig.add_subplot(gs[i, j]) for j in [1, 3, 5]] for i in [1, 3]] )
 
-    plt.rcParams["figure.autolayout"] = True
-
-    datasets = [point_dataset, lowdense_dataset, lesion_dataset]
-    models = [point_model, lowdense_model, lesion_model]
-    idxs = [5, 0, 0]
     names = ['5', '1000', '~56,000']
-
-    for i, (dataset, model, idx, name) in enumerate( zip( datasets, models, idxs, names ) ):
-        datas, locs = [ torch.tensor( x ).unsqueeze(0) for x in dataset[idx]]
-
+    for i in range(3):
         # Plot all the unencoded stuff
-        im = data_axes[0, i].imshow( model.get_targets( datas, locs, 'unencoded')[0], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+        im = data_axes[0, i].imshow( unencoded_targets[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[0, i].set_yticks( data_axes[0, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[0, i].set_ylabel( "Axial (mm)" )
@@ -69,7 +79,7 @@ if __name__ == "__main__":
         data_axes[0, i].set_ylim( flipped_range[2], flipped_range[3] )
 
         # Plot all the synthetic stuff
-        data_axes[1, i].imshow(  model.get_targets( datas, locs, 'synthetic')[0], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
+        data_axes[1, i].imshow(  synthetic_targets[i], cmap='gray', extent=flipped_range, vmin=bf_params['dB_min'], vmax=0 )
         data_axes[1, i].set_yticks( data_axes[1, i].get_yticks()[1:-1] )
         if i == 0:
             data_axes[1, i].set_ylabel( "Axial (mm)" )

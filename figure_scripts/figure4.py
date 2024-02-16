@@ -4,9 +4,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Bbox
 
-import src.ultrasound_imaging as ui
 import src.ultrasound_utilities as uu
 import src.ultrasound_encoding as ue
 import src.settings as s
@@ -16,8 +14,8 @@ import scipy
 import scipy.io
 
 import torch
-import os
 
+######################### Generate data for the plot #########################
 ## Load the data to work on
 dataset = uu.UltrasoundDataset( f"./data/single_point_data" )
 acq_params = scipy.io.loadmat( f"./data/single_point_data/acq_params.mat" )
@@ -28,6 +26,9 @@ enc_params = s.default_enc_params
 bf_params = s.default_bf_params
 bf_params['image_range'] = [-25, 25, 15, 55]
 flipped_range = [-25, 25, 55, 15]
+
+## Pull the sequences from files, or generate them
+##  and define the PyTorch model with each sequence
 
 # Optimized
 opt_delays = torch.tensor( np.loadtxt( f"optimized_sequences/full_parameterization/delays.csv", delimiter="," ), dtype=s.PTFLOAT  )
@@ -53,11 +54,10 @@ for model in [narrow_model, wide_model, opt_model, hadamard_model]:
     model.delays.requires_grad = False
     model.weights.requires_grad = False
 
-# Store lesion radii for cystic resolution
+## Store lesion radii for cystic resolution
 rs = np.linspace(0, 10, 10)
 npts = len(rs)
 
-# Start by looking at the lines
 opt_cystic_contrasts = np.zeros( npts )
 narrow_cystic_contrasts = np.zeros( npts )
 wide_cystic_contrasts = np.zeros( npts )
@@ -69,13 +69,20 @@ for i in range(npts):
     wide_cystic_contrasts[i] = wide_model.cystic_contrast( data, loc, rs[i] )
     hadamard_cystic_contrasts[i] = hadamard_model.cystic_contrast( data, loc, rs[i] )
 
+# Store minimum radius for detectability at -20 dB
 contrast = -20
 opt_detect = opt_model.cystic_resolution( data, loc, contrast )
 narrow_detect = narrow_model.cystic_resolution( data, loc, contrast )
 wide_detect = wide_model.cystic_resolution( data, loc, contrast )
 hadamard_detect = hadamard_model.cystic_resolution( data, loc, contrast )
 
-################### Plot ###################
+## Store the individual sample images
+opt_image = opt_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0]
+narrow_image = narrow_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0]
+wide_image = wide_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0]
+hadamard_image = hadamard_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0]
+
+######################### Create the plot #########################
 fig = plt.figure(figsize=(13, 6.5))
 fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -112,8 +119,7 @@ ax_plot.set_ylim([min_y, max_y])
 ax_plot.set_xlim([min(rs), max(rs)])
 ax_plot.legend()
 
-image = opt_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0]
-im = data_axes[0,0].imshow( image, extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
+im = data_axes[0,0].imshow( opt_image, extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
 data_axes[0,0].set_xlabel( "Lateral (mm)" )
 data_axes[0,0].set_ylabel( "Axial (mm)" )
 data_axes[0,0].set_xlim( flipped_range[0], flipped_range[1] )
@@ -121,7 +127,7 @@ data_axes[0,0].set_ylim( flipped_range[2], flipped_range[3] )
 label_axes[0,0].text( 0.5, -0.75, r"\underline{Optimized Encoding}", transform=label_axes[0,0].transAxes, ha='center', va='center', fontsize=14 )
 label_axes[0,0].set_axis_off()
 
-data_axes[0,1].imshow( narrow_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0], extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
+data_axes[0,1].imshow( narrow_image, extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
 data_axes[0,1].set_yticklabels([])
 data_axes[0,1].set_xlabel( "Lateral (mm)" )
 data_axes[0,1].set_xlim( flipped_range[0], flipped_range[1] )
@@ -129,7 +135,7 @@ data_axes[0,1].set_ylim( flipped_range[2], flipped_range[3] )
 label_axes[0,1].text( 0.5, -0.75, r"\underline{Narrow PW Steering}", transform=label_axes[0, 1].transAxes, ha='center', va='center', fontsize=14 )
 label_axes[0,1].set_axis_off()
 
-data_axes[1,0].imshow( wide_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0], extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
+data_axes[1,0].imshow( wide_image, extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
 data_axes[1,0].set_xlabel( "Lateral (mm)" )
 data_axes[1,0].set_ylabel( "Axial (mm)" )
 data_axes[1,0].set_xlim( flipped_range[0], flipped_range[1] )
@@ -137,7 +143,7 @@ data_axes[1,0].set_ylim( flipped_range[2], flipped_range[3] )
 label_axes[1,0].text( 0.5, -0.75, r"\underline{Wide PW Steering}", transform=label_axes[1, 0].transAxes, ha='center', va='center', fontsize=14 )
 label_axes[1,0].set_axis_off()
 
-data_axes[1,1].imshow( hadamard_model.get_image_prediction( data.unsqueeze(0), loc.unsqueeze(0) )[0], extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
+data_axes[1,1].imshow( hadamard_image, extent=flipped_range, cmap='gray', vmin=-60, vmax=0 )
 data_axes[1,1].set_xlabel( "Lateral (mm)" )
 data_axes[1,1].set_yticklabels([])
 data_axes[1,1].set_xlim( flipped_range[0], flipped_range[1] )

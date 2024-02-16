@@ -2,7 +2,6 @@ import project_root
 import torch
 import src.ultrasound_encoding as ue
 import src.ultrasound_imaging as ui
-import src.ultrasound_utilities as uu
 import src.ultrasound_experiments as ux
 import src.settings as s
 
@@ -10,11 +9,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-import os
-import scipy
-import scipy.io
-
 import numpy as np
+
+######################### Generate data for the plot #########################
 
 ## Set up model parameters
 enc_params = s.default_enc_params
@@ -29,6 +26,7 @@ image_grid = [x_grid, z_grid]
 
 threshold = -20
 
+## Load the data to work on
 opt_dataset = ux.ExperimentalDataset( "data/wire_target_data/optimized" )
 narrow_dataset = ux.ExperimentalDataset( "data/wire_target_data/planewaves_15" )
 middle_dataset = ux.ExperimentalDataset( "data/wire_target_data/planewaves_60" )
@@ -234,6 +232,8 @@ def plot_cystic_resolutions():
     unique_x = np.unique( opt_cystic_resolutions[:, 0] )
     unique_z = np.unique( opt_cystic_resolutions[:, 1] )
     x_targets, y_targets = np.meshgrid( unique_x, unique_z )
+
+    # Reshape the cystic resolutions to match the grid
     narrow_z = np.zeros_like( x_targets )
     opt_z = np.zeros_like( x_targets )
     wide_z = np.zeros_like( x_targets )
@@ -247,7 +247,6 @@ def plot_cystic_resolutions():
         wide_z[z_i, x_i] = wide_cystic_resolutions[i, 2]
         middle_z[z_i, x_i] = middle_cystic_resolutions[i, 2]
 
-    # fig = plt.figure(figsize=(6, 8))
     fig = plt.figure(figsize=(15, 4.5))
     fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -329,5 +328,5 @@ def plot_cystic_resolutions():
         fig.savefig( f"figures/figure8bbottom.{ext}", bbox_inches='tight' )
 
 if __name__ == "__main__":
-    # plot_montage()
+    plot_montage()
     plot_cystic_resolutions()
