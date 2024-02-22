@@ -1,10 +1,12 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10689039.svg)](https://doi.org/10.5281/zenodo.10689039)
+
 # Optimal Ultrasound Encoding
 
 This package contains methods to find optimal encoding sequences for use in synthetic transmit aperture ultrasound imaging. 
 
 The module `encoding_optimization.py` contains the primary function to perform the optimization and generate an optimized encoding sequence. An example execution script is provided in the `examples` folder. 
 
-Collections of sample RF data to used for training can be found in the latest release, along with simulated and experimentally acquired data used for validation of the model. Examples of optimized sequences can be found in the repository.
+Collections of sample RF data to used for training can be found in the repository on Zenodo, along with simulated and experimentally acquired data used for validation of the model. Examples of optimized sequences can be found in the GitHub repository.
 
 # Dependencies
 
