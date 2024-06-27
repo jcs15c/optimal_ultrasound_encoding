@@ -2,7 +2,9 @@
 
 # Optimal Ultrasound Encoding
 
-This package contains methods to find optimal encoding sequences for use in synthetic transmit aperture ultrasound imaging. 
+This package contains methods to find optimal encoding sequences for use in synthetic transmit aperture ultrasound imaging.
+
+This code is based on the procedures introduced in ``[Optimization of array encoding for ultrasound imaging](https://iopscience.iop.org/article/10.1088/1361-6560/ad5249/meta)'' ([arXiv](https://arxiv.org/abs/2403.00289)). 
 
 The module `encoding_optimization.py` contains the primary function to perform the optimization and generate an optimized encoding sequence. An example execution script is provided in the `examples` folder. 
 
