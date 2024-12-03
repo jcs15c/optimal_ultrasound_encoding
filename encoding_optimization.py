@@ -102,7 +102,7 @@ def optimize_encoding_sequence( results_folder, data_folder, # Folder names cont
     split = int(np.floor(0.2 * len(dataset)))
     if opt_params['training_shuffle']:
         np.random.shuffle(indices)
-    train_idx, test_idx = indices[2:4], indices[:2]
+    train_idx, test_idx = indices[split:], indices[:split]
 
     # Write description of test to file so you don't forget what you did
     print( f"Saving results to {results_folder}..." )
@@ -143,7 +143,7 @@ def optimize_encoding_sequence( results_folder, data_folder, # Folder names cont
         print("Invalid choice for optimization parameters")
         return
 
-    # training_model = torch.compile( uncompiled_model )
+    # training_model = torch.compile( uncompiled_model ) # Untested, only available with PyTorch >2.0
     prediction_model = uncompiled_model
     
     # Select descent algorithm
